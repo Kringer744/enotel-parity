@@ -1,0 +1,197 @@
+import { query } from '../db/pool.js'
+import * as serp from './serpapi.js'
+import * as parity from './parity.js'
+import * as budget from '../lib/budget.js'
+import { getSettings } from './settings.js'
+import { notifyScan } from './notifier.js'
+
+let running = false
+
+export function isRunning () {
+  return running
+}
+
+async function loadChannels () {
+  const { rows } = await query('SELECT * FROM channels WHERE active ORDER BY sort_order')
+  return rows
+}
+
+async function loadTargets () {
+  const { rows } = await query(
+    `SELECT t.*, p.name AS property_name, p.serp_query, p.serp_property_token,
+            p.currency, p.id AS property_id
+     FROM scan_targets t
+     JOIN properties p ON p.id = t.property_id
+     WHERE t.active AND p.active
+     ORDER BY p.id, t.horizon_days`
+  )
+  return rows
+}
+
+/** Garante o property_token em cache; custa 1 requisicao apenas na primeira vez. */
+async function ensureToken (target, dates, opts) {
+  if (target.serp_property_token) return { token: target.serp_property_token, spent: 0 }
+
+  const found = await serp.findPropertyToken(target.serp_query, {
+    checkIn: dates.checkIn,
+    checkOut: dates.checkOut,
+    adults: target.adults
+  }, opts)
+
+  await query('UPDATE properties SET serp_property_token = $1 WHERE id = $2', [
+    found.token,
+    target.property_id
+  ])
+  return { token: found.token, spent: 1 }
+}
+
+async function processTarget (scanId, target, channels, settings, opts) {
+  const dates = serp.datesForHorizon(target.horizon_days, target.los)
+  let spent = 0
+
+  const { token, spent: tokenSpent } = await ensureToken(target, dates, opts)
+  spent += tokenSpent
+
+  const { offers } = await serp.fetchOffers(token, {
+    checkIn: dates.checkIn,
+    checkOut: dates.checkOut,
+    adults: target.adults,
+    los: target.los
+  }, opts)
+  spent += 1
+
+  // Mapeia ofertas -> canais monitorados. Ofertas de canais nao cadastrados
+  // (agencias avulsas) sao descartadas de proposito: nao ha contrato de paridade.
+  const observations = []
+  for (const offer of offers) {
+    const channel = parity.matchChannel(offer.source, channels)
+    if (!channel) continue
+    // Se o mesmo canal aparecer duas vezes, fica a menor tarifa -- e ela que o
+    // hospede enxerga e ela que caracteriza a violacao.
+    const existing = observations.find((o) => o.channel.id === channel.id)
+    if (existing) {
+      if (offer.price < existing.price) {
+        existing.price = offer.price
+        existing.sourceRaw = offer.source
+      }
+      continue
+    }
+    observations.push({ channel, price: offer.price, sourceRaw: offer.source })
+  }
+
+  for (const o of observations) {
+    await query(
+      `INSERT INTO rates (scan_id, property_id, channel_id, target_id, check_in, check_out,
+                          los, adults, price, currency, source_raw)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [scanId, target.property_id, o.channel.id, target.id, dates.checkIn, dates.checkOut,
+        target.los, target.adults, o.price, target.currency, o.sourceRaw]
+    )
+  }
+
+  const found = parity.evaluate(observations, settings)
+  for (const f of found) {
+    await query(
+      `INSERT INTO findings (scan_id, property_id, channel_id, target_id, check_in, check_out,
+                             kind, base_price, channel_price, delta_abs, delta_pct, severity)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [scanId, target.property_id, f.channelId ?? null, target.id, dates.checkIn, dates.checkOut,
+        f.kind, f.basePrice, f.channelPrice, f.deltaAbs, f.deltaPct, f.severity]
+    )
+  }
+
+  // Canal monitorado que sumiu da oferta: possivel bloqueio ou ruptura de estoque.
+  const seenIds = new Set(observations.map((o) => o.channel.id))
+  const missing = channels.filter((c) => c.kind === 'ota' && !seenIds.has(c.id))
+  for (const c of missing) {
+    await query(
+      `INSERT INTO findings (scan_id, property_id, channel_id, target_id, check_in, check_out,
+                             kind, severity)
+       VALUES ($1,$2,$3,$4,$5,$6,'missing_channel','info')`,
+      [scanId, target.property_id, c.id, target.id, dates.checkIn, dates.checkOut]
+    )
+  }
+
+  return { spent, rates: observations.length, findings: found.length }
+}
+
+/**
+ * Executa uma varredura completa.
+ * @param {'schedule'|'manual'} trigger
+ */
+export async function runScan ({ trigger = 'schedule' } = {}) {
+  if (running) {
+    return { skipped: true, reason: 'Uma varredura ja esta em andamento' }
+  }
+  running = true
+
+  const settings = await getSettings()
+  const channels = await loadChannels()
+  const targets = await loadTargets()
+  // Disparo manual pode usar a reserva de emergencia; o agendador nunca pode.
+  const opts = { allowReserve: trigger === 'manual' }
+
+  const { rows: scanRows } = await query(
+    'INSERT INTO scans (trigger, targets_total) VALUES ($1, $2) RETURNING id',
+    [trigger, targets.length]
+  )
+  const scanId = scanRows[0].id
+
+  let spent = 0
+  let ok = 0
+  let rates = 0
+  let findings = 0
+  const errors = []
+
+  try {
+    // Checagem previa: se nem o primeiro alvo cabe, aborta sem gastar nada.
+    const usage = await budget.getUsage()
+    const available = opts.allowReserve ? usage.remaining : usage.scheduledRemaining
+    if (available < 1) {
+      await query(
+        `UPDATE scans SET status='skipped', finished_at=now(),
+                          message=$2 WHERE id=$1`,
+        [scanId, `Orcamento SerpAPI esgotado (${usage.used}/${usage.limit})`]
+      )
+      return { scanId, skipped: true, reason: 'budget', usage }
+    }
+
+    for (const target of targets) {
+      try {
+        const r = await processTarget(scanId, target, channels, settings, opts)
+        spent += r.spent
+        rates += r.rates
+        findings += r.findings
+        ok += 1
+      } catch (err) {
+        errors.push(`${target.property_name} / ${target.label}: ${err.message}`)
+        // Orcamento estourou no meio: parar imediatamente e preservar o resto.
+        if (err.budgetExhausted) break
+      }
+    }
+
+    const status = errors.length === 0 ? 'ok' : (ok > 0 ? 'partial' : 'failed')
+    await query(
+      `UPDATE scans SET status=$2, finished_at=now(), requests_used=$3, targets_ok=$4,
+                        rates_captured=$5, findings_count=$6, message=$7
+       WHERE id=$1`,
+      [scanId, status, spent, ok, rates, findings, errors.join(' | ') || null]
+    )
+
+    const notification = await notifyScan(scanId).catch((err) => ({
+      sent: false,
+      error: err.message
+    }))
+
+    return { scanId, status, spent, ok, rates, findings, errors, notification }
+  } catch (err) {
+    await query(
+      `UPDATE scans SET status='failed', finished_at=now(), requests_used=$3, message=$2
+       WHERE id=$1`,
+      [scanId, err.message, spent]
+    )
+    throw err
+  } finally {
+    running = false
+  }
+}
