@@ -1,0 +1,41 @@
+# Uso local / VPS avulsa. No EasyPanel os serviços são criados pelo painel
+# (ou pelo scripts/easypanel-deploy.js) e este arquivo não é necessário.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: enotel_parity
+      POSTGRES_USER: enotel
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-enotel_local}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enotel -d enotel_parity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://enotel:${POSTGRES_PASSWORD:-enotel_local}@db:5432/enotel_parity
+      PGSSLMODE: disable
+      JWT_SECRET: ${JWT_SECRET:-troque-em-producao}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SERPAPI_KEY: ${SERPAPI_KEY}
+      SERPAPI_MONTHLY_LIMIT: ${SERPAPI_MONTHLY_LIMIT:-250}
+      UAZAPI_URL: ${UAZAPI_URL:-}
+      UAZAPI_ADMIN_TOKEN: ${UAZAPI_ADMIN_TOKEN:-}
+      SCAN_CRON: ${SCAN_CRON:-10 6 * * *}
+      SCAN_TIMEZONE: America/Recife
+
+volumes:
+  pgdata:
