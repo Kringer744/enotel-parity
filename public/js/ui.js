@@ -27,10 +27,10 @@ export const pct = (v, digits = 1) =>
   v === null || v === undefined ? '—' : `${Number(v).toFixed(digits).replace('.', ',')}%`
 
 export const SEVERITY = {
-  critical: { label: 'Crítico', icon: '⛔' },
-  serious: { label: 'Grave', icon: '⚠️' },
-  warning: { label: 'Atenção', icon: '⚡' },
-  info: { label: 'Info', icon: 'ℹ️' }
+  critical: { label: 'Crítico', icon: 'shield-alert' },
+  serious: { label: 'Grave', icon: 'alert-triangle' },
+  warning: { label: 'Atenção', icon: 'alert-circle' },
+  info: { label: 'Info', icon: 'info' }
 }
 
 export const KIND = {
@@ -40,27 +40,26 @@ export const KIND = {
   missing_channel: 'Canal sem oferta'
 }
 
-/** Selo de severidade — ícone + rótulo, nunca cor sozinha. */
 export function severityBadge (severity) {
   const s = SEVERITY[severity] || SEVERITY.info
-  return `<span class="badge ${severity}"><span aria-hidden="true">${s.icon}</span>${s.label}</span>`
+  return `<span class="badge ${severity}"><i data-lucide="${s.icon}" class="icon-sm"></i>${s.label}</span>`
 }
 
 export function statusBadge (status) {
   const map = {
-    ok: ['good', '✓', 'Concluída'],
-    partial: ['warning', '⚡', 'Parcial'],
-    failed: ['critical', '✕', 'Falhou'],
-    running: ['info', '↻', 'Em andamento'],
-    skipped: ['neutral', '—', 'Pulada'],
-    open: ['critical', '●', 'Aberto'],
-    acknowledged: ['warning', '👁', 'Ciente'],
-    resolved: ['good', '✓', 'Resolvido'],
-    sent: ['good', '✓', 'Enviada'],
-    pending: ['neutral', '○', 'Pendente']
+    ok: ['good', 'check-circle', 'Concluída'],
+    partial: ['warning', 'alert-circle', 'Parcial'],
+    failed: ['critical', 'x-circle', 'Falhou'],
+    running: ['info', 'loader-2', 'Em andamento'],
+    skipped: ['neutral', 'skip-forward', 'Pulada'],
+    open: ['critical', 'alert-triangle', 'Aberto'],
+    acknowledged: ['warning', 'eye', 'Ciente'],
+    resolved: ['good', 'check', 'Resolvido'],
+    sent: ['good', 'send', 'Enviada'],
+    pending: ['neutral', 'clock', 'Pendente']
   }
-  const [cls, icon, label] = map[status] || ['neutral', '·', status]
-  return `<span class="badge ${cls}"><span aria-hidden="true">${icon}</span>${label}</span>`
+  const [cls, icon, label] = map[status] || ['neutral', 'help-circle', status]
+  return `<span class="badge ${cls}"><i data-lucide="${icon}" class="icon-sm"></i>${label}</span>`
 }
 
 export function escapeHtml (s) {
@@ -76,11 +75,12 @@ export function toast (message, kind = 'info', ms = 4200) {
     toastHost.className = 'toast-host'
     document.body.appendChild(toastHost)
   }
-  const icon = kind === 'error' ? '✕' : kind === 'ok' ? '✓' : 'ℹ'
+  const icon = kind === 'error' ? 'x-circle' : kind === 'ok' ? 'check-circle' : 'info'
   const el = document.createElement('div')
   el.className = `toast ${kind}`
-  el.innerHTML = `<span aria-hidden="true">${icon}</span><span>${escapeHtml(message)}</span>`
+  el.innerHTML = `<i data-lucide="${icon}" class="icon-sm"></i><span>${escapeHtml(message)}</span>`
   toastHost.appendChild(el)
+  lucide.createIcons({ root: el })
   setTimeout(() => {
     el.style.opacity = '0'
     el.style.transform = 'translateX(20px)'
@@ -89,8 +89,7 @@ export function toast (message, kind = 'info', ms = 4200) {
   }, ms)
 }
 
-/** Estado de carregamento em botão, restaurando o rótulo original ao fim. */
-export function busy (btn, on, label = 'Aguarde…') {
+export function busy (btn, on, label = 'Aguarde...') {
   if (on) {
     btn._label = btn.innerHTML
     btn.disabled = true
@@ -106,5 +105,5 @@ export function skeleton (height = 200) {
 }
 
 export function emptyState (icon, text) {
-  return `<div class="empty"><div class="empty-icon">${icon}</div>${escapeHtml(text)}</div>`
+  return `<div class="empty"><i data-lucide="${icon}" class="empty-icon"></i>${escapeHtml(text)}</div>`
 }
