@@ -112,6 +112,17 @@ export function skeleton (height = 200) {
   return `<div class="skeleton" style="height:${height}px"></div>`
 }
 
+/**
+ * Bloco de carregamento com texto. Diz o que está acontecendo -- uma consulta
+ * ao Google Hotels leva dezenas de segundos e o silêncio parece travamento.
+ */
+export function loading (text = 'Carregando dados...', height = 200) {
+  return `<div class="loading-block" style="min-height:${height}px">
+    <span class="spinner"></span>
+    <span class="loading-text">${escapeHtml(text)}</span>
+  </div>`
+}
+
 export function emptyState (icon, text) {
   return `<div class="empty"><i data-lucide="${icon}" class="empty-icon"></i>${escapeHtml(text)}</div>`
 }

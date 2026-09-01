@@ -1,7 +1,7 @@
-﻿import { api, getToken, setToken, downloadCsv } from './api.js'
+import { api, getToken, setToken, downloadCsv } from './api.js'
 import {
   fmtDateTime, fmtDate, fmtRelative, pct, severityBadge, statusBadge,
-  escapeHtml, toast, busy, skeleton, emptyState, refreshIcons, KIND
+  escapeHtml, toast, busy, skeleton, loading, emptyState, refreshIcons, KIND
 } from './ui.js'
 import { lineChart, barChart, heatmap, money2 } from './charts.js'
 
@@ -174,20 +174,20 @@ async function pageDashboard (main) {
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">Tarifa média por canal</div>
-            <div class="card-note" id="trend-note">Diária média em BRL</div>
+            <div class="card-title">Site oficial vs. OTAs</div>
+            <div class="card-note">Ranking por desvio frente à tarifa direta</div>
           </div>
         </div>
-        <div id="trend">${skeleton(300)}</div>
+        <div id="ranking">${loading('Comparando canais...', 260)}</div>
       </div>
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">Conformidade por canal</div>
-            <div class="card-note">% de comparações dentro da paridade</div>
+            <div class="card-title">Tarifa média por canal</div>
+            <div class="card-note" id="trend-note">Diária média em BRL</div>
           </div>
         </div>
-        <div id="compliance">${skeleton(260)}</div>
+        <div id="trend">${loading('Carregando série histórica...', 300)}</div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -200,7 +200,7 @@ async function pageDashboard (main) {
           Ver todas <i data-lucide="arrow-right" class="icon-sm"></i>
         </button>
       </div>
-      <div id="recent">${skeleton(200)}</div>
+      <div id="recent">${loading('Buscando violações...', 200)}</div>
     </div>`
 
   wirePeriod(() => pageDashboard(main))
@@ -208,22 +208,33 @@ async function pageDashboard (main) {
 
   document.getElementById('run-scan').addEventListener('click', async (ev) => {
     const btn = ev.currentTarget
-    busy(btn, true, 'Varrendo…')
+    busy(btn, true, 'Varrendo...')
     try {
       await api.runScan()
-      toast('Varredura iniciada. Os resultados aparecem em instantes.', 'ok')
-      // A varredura roda em segundo plano; recarrega quando deve ter terminado.
-      setTimeout(() => { if (state.page === 'dashboard') pageDashboard(main) }, 25000)
+      document.getElementById('ranking').innerHTML =
+        loading('Consultando o Google Hotels via SerpAPI...', 260)
+      document.getElementById('trend').innerHTML =
+        loading('Aguardando as tarifas da varredura...', 300)
+      document.getElementById('recent').innerHTML =
+        loading('A varredura leva de 10 a 40 segundos...', 200)
+
+      const scan = await waitForScan()
+      if (scan?.status === 'ok' || scan?.status === 'partial') {
+        toast(`Varredura concluída: ${scan.rates_captured} tarifas, ${scan.findings_count} achados`, 'ok')
+      } else if (scan) {
+        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+      }
+      if (state.page === 'dashboard') return pageDashboard(main)
     } catch (err) {
       toast(err.message, 'error')
     } finally {
-      setTimeout(() => busy(btn, false), 1500)
+      busy(btn, false)
     }
   })
 
-  const [ov, trend, compliance, findings] = await Promise.all([
+  const [ov, trend, compliance, findings, rates] = await Promise.all([
     api.overview(), api.trend(state.days), api.compliance(state.days),
-    api.findings({ days: state.days, limit: 8 })
+    api.findings({ days: state.days, limit: 8 }), api.currentRates()
   ])
 
   state.openCount = ov.openTotal
@@ -304,24 +315,143 @@ async function pageDashboard (main) {
     height: 300
   })
 
-  barChart(document.getElementById('compliance'), {
-    items: compliance.map((c) => ({
-      name: c.name,
-      color: c.color,
-      value: c.complianceRate ?? 0,
-      detail: [
-        { label: 'Comparações', value: c.comparisons },
-        { label: 'Violações', value: c.violations },
-        { label: 'Desvio médio', value: c.avg_delta !== null ? pct(c.avg_delta) : '—' },
-        { label: 'Pior desvio', value: c.worst_delta !== null ? pct(c.worst_delta) : '—' }
-      ]
-    })),
-    max: 100,
-    valueFmt: (v) => `${v.toFixed(0)}%`
-  })
+  renderRanking(document.getElementById('ranking'), rates, compliance)
 
   document.getElementById('recent').innerHTML = findingsTable(findings)
   wireFindingRows()
+  refreshIcons(main)
+}
+
+/* ═══ Ranking: site oficial vs. OTAs ══════════════════════════════════════ */
+
+/**
+ * Agrega o snapshot mais recente por canal. O ranking é ordenado pelo PIOR
+ * desvio, não pela média: uma OTA que fura a paridade em uma única data já é
+ * um problema contratual, e a média esconderia isso.
+ */
+function buildRanking (rates, compliance) {
+  const byChannel = new Map()
+  let anchorSum = 0
+  let anchorCount = 0
+
+  for (const g of rates) {
+    if (g.directPrice) { anchorSum += g.directPrice; anchorCount += 1 }
+    for (const o of g.offers) {
+      if (o.kind !== 'ota' || o.deltaPct === null) continue
+      if (!byChannel.has(o.slug)) {
+        byChannel.set(o.slug, { slug: o.slug, name: o.name, color: o.color, deltas: [], prices: [] })
+      }
+      const entry = byChannel.get(o.slug)
+      entry.deltas.push(o.deltaPct)
+      entry.prices.push(o.price)
+    }
+  }
+
+  const withData = [...byChannel.values()].map((e) => {
+    const avg = e.deltas.reduce((a, b) => a + b, 0) / e.deltas.length
+    return {
+      ...e,
+      hasData: true,
+      worst: Math.min(...e.deltas),
+      avg: Math.round(avg * 10) / 10,
+      avgPrice: e.prices.reduce((a, b) => a + b, 0) / e.prices.length,
+      undercuts: e.deltas.filter((d) => d < -1).length,
+      dates: e.deltas.length
+    }
+  }).sort((a, b) => a.worst - b.worst)
+
+  // Canais monitorados que não apareceram na oferta entram no fim, marcados
+  // como sem dados -- nunca como 0% de conformidade, que leria como violação.
+  const seen = new Set(withData.map((r) => r.slug))
+  const missing = compliance
+    .filter((c) => !seen.has(c.slug))
+    .map((c) => ({ slug: c.slug, name: c.name, color: c.color, hasData: false }))
+
+  return {
+    rows: [...withData, ...missing],
+    anchor: anchorCount > 0 ? anchorSum / anchorCount : null,
+    dateCount: rates.length
+  }
+}
+
+function renderRanking (host, rates, compliance) {
+  const { rows, anchor, dateCount } = buildRanking(rates, compliance)
+
+  if (rows.length === 0 || anchor === null) {
+    host.innerHTML = emptyState('info',
+      anchor === null && rates.length > 0
+        ? 'Sem tarifa do site oficial na última varredura — não há âncora para comparar.'
+        : 'Nenhuma tarifa coletada ainda. Rode uma varredura para montar o ranking.')
+    refreshIcons(host)
+    return
+  }
+
+  // Escala da barra divergente: o maior desvio absoluto define as pontas.
+  const scale = Math.max(...rows.filter((r) => r.hasData).map((r) => Math.abs(r.worst)), 5)
+
+  host.innerHTML = `
+    <div class="rank-anchor">
+      <i data-lucide="anchor" class="icon-sm"></i>
+      <span class="rank-anchor-label">
+        Tarifa do site oficial · média de ${dateCount} ${dateCount === 1 ? 'data' : 'datas'}
+      </span>
+      <span class="rank-anchor-value">${money2(anchor)}</span>
+    </div>
+    ${rows.map((r, i) => {
+      if (!r.hasData) {
+        return `
+          <div class="rank-row no-data">
+            <div class="rank-pos">—</div>
+            <div class="rank-name">
+              <span class="channel-swatch" style="background:${r.color}"></span>
+              <span><span class="label">${escapeHtml(r.name)}</span></span>
+            </div>
+            <div class="rank-bar"></div>
+            <div class="rank-delta"><span class="sub">sem oferta</span></div>
+            <span class="badge neutral">Sem dados</span>
+          </div>`
+      }
+
+      const violating = r.worst < -1
+      const width = Math.min(50, (Math.abs(r.worst) / scale) * 50)
+      const cls = r.worst < 0 ? 'neg' : 'pos'
+
+      return `
+        <div class="rank-row ${violating ? 'violating' : ''}">
+          <div class="rank-pos">${i + 1}</div>
+          <div class="rank-name">
+            <span class="channel-swatch" style="background:${r.color}"></span>
+            <span>
+              <span class="label">${escapeHtml(r.name)}</span>
+              <span class="sub">${money2(r.avgPrice)} · média de ${r.dates} ${r.dates === 1 ? 'data' : 'datas'}</span>
+            </span>
+          </div>
+          <div class="rank-bar"><span class="${cls}" style="width:${width}%"></span></div>
+          <div class="rank-delta ${cls}">
+            ${r.worst > 0 ? '+' : ''}${pct(r.worst)}
+            <span class="sub">pior desvio</span>
+          </div>
+          ${violating
+            ? `<span class="badge critical">
+                 <i data-lucide="ban" class="icon-sm"></i>
+                 ${r.undercuts} de ${r.dates}
+               </span>`
+            : '<span class="badge good"><i data-lucide="check" class="icon-sm"></i>Em paridade</span>'}
+        </div>`
+    }).join('')}`
+
+  refreshIcons(host)
+}
+
+/** Acompanha a varredura em segundo plano até ela sair de 'running'. */
+async function waitForScan ({ timeoutMs = 120000, intervalMs = 3000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs))
+    const [scan] = await api.scans(1).catch(() => [])
+    if (scan && scan.status !== 'running') return scan
+  }
+  return null
 }
 
 /* ═══ Tarifas atuais ══════════════════════════════════════════════════════ */
@@ -334,7 +464,7 @@ async function pageRates (main) {
         <p class="page-sub">Fotografia da última varredura, por data de check-in</p>
       </div>
     </div>
-    <div id="rates">${skeleton(320)}</div>`
+    <div id="rates">${loading('Carregando tarifas da última varredura...', 320)}</div>`
 
   const groups = await api.currentRates()
   const host = document.getElementById('rates')
@@ -482,7 +612,7 @@ async function pageFindings (main) {
         </select>
       </div>
     </div>
-    <div class="card"><div id="list">${skeleton(300)}</div></div>`
+    <div class="card"><div id="list">${loading('Buscando violações...', 300)}</div></div>`
 
   wirePeriod(() => pageFindings(main))
 
@@ -492,7 +622,7 @@ async function pageFindings (main) {
     const st = document.getElementById('f-status').value
     if (sev) params.severity = sev
     if (st) params.status = st
-    document.getElementById('list').innerHTML = skeleton(300)
+    document.getElementById('list').innerHTML = loading('Buscando violações...', 300)
     const findings = await api.findings(params)
     document.getElementById('list').innerHTML = findingsTable(findings)
     wireFindingRows()
@@ -518,7 +648,7 @@ async function pageReport (main) {
         <button class="btn secondary" id="print">Imprimir / PDF</button>
       </div>
     </div>
-    <div id="report-body">${skeleton(500)}</div>`
+    <div id="report-body">${loading('Gerando relatório...', 500)}</div>`
 
   wirePeriod(() => pageReport(main))
   document.getElementById('print').addEventListener('click', () => window.print())
@@ -666,14 +796,19 @@ async function pageReport (main) {
     height: 280
   })
 
+  // Canais sem comparação nenhuma ficam fora: 0% leria como violação total,
+  // quando na verdade o canal simplesmente não apareceu na oferta.
   barChart(document.getElementById('r-compliance'), {
-    items: r.compliance.map((c) => ({
-      name: c.name, color: c.color, value: c.complianceRate ?? 0,
-      detail: [
-        { label: 'Comparações', value: c.comparisons },
-        { label: 'Violações', value: c.violations }
-      ]
-    })),
+    items: r.compliance
+      .filter((c) => c.comparisons > 0)
+      .map((c) => ({
+        name: c.name, color: c.color, value: c.complianceRate,
+        detail: [
+          { label: 'Comparações', value: c.comparisons },
+          { label: 'Violações', value: c.violations },
+          { label: 'Pior desvio', value: c.worst_delta !== null ? pct(c.worst_delta) : '—' }
+        ]
+      })),
     max: 100,
     valueFmt: (v) => `${v.toFixed(0)}%`
   })
@@ -697,8 +832,8 @@ async function pageWhatsApp (main) {
       </div>
     </div>
     <div class="grid two">
-      <div class="card"><div id="wa-conn">${skeleton(280)}</div></div>
-      <div class="card"><div id="wa-recip">${skeleton(280)}</div></div>
+      <div class="card"><div id="wa-conn">${loading('Verificando conexão...', 280)}</div></div>
+      <div class="card"><div id="wa-recip">${loading('Carregando destinatários...', 280)}</div></div>
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div>
@@ -727,7 +862,7 @@ Varredura de 31/08/2026 06:10
     </div>
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div class="card-title">Envios recentes</div></div>
-      <div id="wa-log">${skeleton(140)}</div>
+      <div id="wa-log">${loading('Carregando envios...', 140)}</div>
     </div>`
 
   await renderWaConnection()
@@ -842,7 +977,7 @@ async function renderWaConnection () {
 async function loadContacts () {
   const host = document.getElementById('contacts')
   if (!host) return
-  host.innerHTML = skeleton(200)
+  host.innerHTML = loading('Buscando contatos do WhatsApp...', 200)
   try {
     const contacts = await api.waContacts()
     if (contacts.length === 0) {
@@ -991,7 +1126,7 @@ async function pageSettings (main) {
         <p class="page-sub">Regras de paridade, alvos de varredura e orçamento de API</p>
       </div>
     </div>
-    <div id="settings-body">${skeleton(420)}</div>`
+    <div id="settings-body">${loading('Carregando configurações...', 420)}</div>`
 
   const [s, props, budget] = await Promise.all([api.settings(), api.properties(), api.budget()])
   const p = s.parity

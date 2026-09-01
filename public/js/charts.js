@@ -14,6 +14,17 @@ function renderEmpty (host, icon, text) {
   refreshIcons(host)
 }
 
+/**
+ * Esvazia o contêiner antes de desenhar, preservando só o tooltip (que é
+ * reaproveitado entre redesenhos). Sem isto o esqueleto de carregamento e o
+ * SVG anterior ficam empilhados embaixo do gráfico.
+ */
+function clearChart (host) {
+  for (const child of [...host.children]) {
+    if (!child.classList.contains('tooltip')) child.remove()
+  }
+}
+
 const BRL = new Intl.NumberFormat('pt-BR', {
   style: 'currency', currency: 'BRL', maximumFractionDigits: 0
 })
@@ -248,7 +259,7 @@ export function lineChart (host, { dates, series, height = 300, valueFmt = money
       tip.hide()
     })
 
-    host.querySelector('svg')?.remove()
+    clearChart(host)
     host.prepend(svg)
     renderLegend(host, live)
   })
@@ -326,7 +337,7 @@ export function barChart (host, { items, height = null, valueFmt = (v) => `${v}%
       hit.addEventListener('mouseleave', () => tip.hide())
     })
 
-    host.querySelector('svg')?.remove()
+    clearChart(host)
     host.prepend(svg)
   })
 }
