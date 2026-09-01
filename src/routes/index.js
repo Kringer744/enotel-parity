@@ -6,7 +6,9 @@ import * as scanner from '../services/scanner.js'
 import * as uazapi from '../services/uazapi.js'
 import * as notifier from '../services/notifier.js'
 import { getSettings, updateSetting } from '../services/settings.js'
-import { getUsage, forecast } from '../lib/budget.js'
+import { matchChannel } from '../services/parity.js'
+import { getUsage, forecast, fetchAccount, syncWithProvider } from '../lib/budget.js'
+import { config } from '../config.js'
 
 export const router = Router()
 
@@ -113,6 +115,94 @@ router.post('/scans/run', wrap(async (req, res) => {
 
 router.get('/budget', wrap(async (req, res) => {
   res.json(await forecast())
+}))
+
+router.post('/budget/sync', wrap(async (req, res) => {
+  const result = await syncWithProvider()
+  await audit(req.user.email, 'budget.sync', result)
+  res.json({ ...result, usage: await forecast() })
+}))
+
+/**
+ * Diagnostico da integracao. Sem `?live=1` nao gasta nenhuma requisicao:
+ * o endpoint /account da SerpAPI e gratuito.
+ */
+router.get('/serpapi/diagnose', wrap(async (req, res) => {
+  const out = { steps: [] }
+
+  out.steps.push({
+    step: 'Chave configurada',
+    ok: Boolean(config.serpapi.key),
+    detail: config.serpapi.key
+      ? `termina em ...${config.serpapi.key.slice(-6)}`
+      : 'SERPAPI_KEY vazia nas variaveis de ambiente'
+  })
+
+  const account = await fetchAccount({ force: true })
+  out.steps.push({
+    step: 'Conta SerpAPI acessivel',
+    ok: account.ok,
+    detail: account.ok
+      ? `plano ${account.planName} · ${account.thisMonthUsage} usadas no mes · ${account.totalSearchesLeft} restantes`
+      : account.error
+  })
+  out.account = account
+
+  const { rows: targets } = await query(
+    `SELECT t.id, t.label, t.horizon_days, t.los, t.adults, t.active,
+            p.name AS property_name, p.serp_query, p.serp_property_token
+     FROM scan_targets t JOIN properties p ON p.id = t.property_id
+     WHERE t.active AND p.active ORDER BY t.horizon_days`
+  )
+  out.steps.push({
+    step: 'Alvos ativos',
+    ok: targets.length > 0,
+    detail: targets.length > 0
+      ? `${targets.length} alvo(s) · ${targets.length} requisicao(oes) por varredura`
+      : 'Nenhum alvo ativo — a varredura nao tem o que consultar'
+  })
+  out.targets = targets
+
+  const { rows: lastScan } = await query('SELECT * FROM scans ORDER BY started_at DESC LIMIT 1')
+  out.lastScan = lastScan[0] || null
+  out.steps.push({
+    step: 'Ultima varredura',
+    ok: Boolean(lastScan[0]) && lastScan[0].status !== 'failed',
+    detail: lastScan[0]
+      ? `#${lastScan[0].id} · ${lastScan[0].status} · ${lastScan[0].message || 'sem erros'}`
+      : 'Nenhuma varredura executada ainda'
+  })
+
+  // Busca real: 1-2 requisicoes. So roda quando pedido explicitamente.
+  if (req.query.live === '1' && targets.length > 0 && account.ok) {
+    const target = targets[0]
+    try {
+      const probe = await serp.probe(target)
+      const { rows: channels } = await query('SELECT * FROM channels WHERE active')
+      out.probe = {
+        ...probe,
+        offers: probe.offers.map((o) => {
+          const ch = matchChannel(o.source, channels)
+          return {
+            source: o.source,
+            price: o.price,
+            matchedChannel: ch ? ch.name : null,
+            ignored: !ch
+          }
+        })
+      }
+      out.steps.push({
+        step: 'Busca real no Google Hotels',
+        ok: probe.offers.length > 0,
+        detail: `${probe.offers.length} oferta(s) · ${out.probe.offers.filter((o) => !o.ignored).length} casadas com canais monitorados`
+      })
+    } catch (err) {
+      out.steps.push({ step: 'Busca real no Google Hotels', ok: false, detail: err.message })
+    }
+  }
+
+  out.ok = out.steps.every((s) => s.ok)
+  res.json(out)
 }))
 
 // ─── Propriedades e alvos ────────────────────────────────────────────────────

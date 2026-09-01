@@ -71,20 +71,36 @@ async function seedChannels () {
   }
 }
 
+// A consulta precisa trazer o hotel na LISTA do Google Hotels. "Enotel Porto de
+// Galinhas" sozinho devolve zero resultados; incluir cidade e estado resolve.
+// O token foi confirmado contra a API e evita a requisicao de descoberta.
+const PROPERTY = {
+  name: 'Enotel Porto de Galinhas',
+  serpQuery: 'Enotel resort Ipojuca Pernambuco',
+  serpToken: 'ChgIzcua6s28ueG-ARoLL2cvMXRtOGtzeGMQAQ',
+  city: 'Ipojuca, PE',
+  directUrl: 'https://www.enotel.com.br/'
+}
+
 async function seedProperty () {
-  const { rows } = await query('SELECT id FROM properties LIMIT 1')
-  if (rows.length > 0) return rows[0].id
+  const { rows } = await query('SELECT id, serp_query FROM properties ORDER BY id LIMIT 1')
+
+  if (rows.length > 0) {
+    // Reparo de bancos ja provisionados com a consulta que nao retornava nada.
+    if (rows[0].serp_query === 'Enotel Porto de Galinhas') {
+      await query(
+        'UPDATE properties SET serp_query = $2, serp_property_token = $3 WHERE id = $1',
+        [rows[0].id, PROPERTY.serpQuery, PROPERTY.serpToken]
+      )
+      console.log('[migrate] consulta SerpAPI da propriedade corrigida')
+    }
+    return rows[0].id
+  }
 
   const { rows: created } = await query(
-    `INSERT INTO properties (name, serp_query, city, currency, direct_url)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [
-      'Enotel Porto de Galinhas',
-      'Enotel Porto de Galinhas',
-      'Ipojuca, PE',
-      'BRL',
-      'https://www.enotel.com.br/'
-    ]
+    `INSERT INTO properties (name, serp_query, serp_property_token, city, currency, direct_url)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [PROPERTY.name, PROPERTY.serpQuery, PROPERTY.serpToken, PROPERTY.city, 'BRL', PROPERTY.directUrl]
   )
   const propertyId = created[0].id
 

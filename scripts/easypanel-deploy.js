@@ -72,11 +72,11 @@ async function trpc (procedure, input, { mutation = true } = {}) {
 async function ensure (label, fn) {
   try {
     const out = await fn()
-    console.log(`  ✓ ${label}`)
+    console.log(`  [ok]    ${label}`)
     return out
   } catch (err) {
     if (/already exists|já existe|duplicate/i.test(err.message)) {
-      console.log(`  · ${label} (já existia)`)
+      console.log(`  [pulou] ${label} (já existia)`)
       return null
     }
     throw err
@@ -198,7 +198,7 @@ async function main () {
 }
 
 main().catch((err) => {
-  console.error(`\n✕ Falhou: ${err.message}`)
+  console.error(`\n[erro] Falhou: ${err.message}`)
   if (err.body) console.error(JSON.stringify(err.body, null, 2))
   console.error('\nSe o erro for 404 em todos os procedimentos, a versão do seu')
   console.error('EasyPanel usa outra API. Nesse caso siga DEPLOY-EASYPANEL.md (via painel).')

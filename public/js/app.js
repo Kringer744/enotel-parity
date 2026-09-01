@@ -1,7 +1,7 @@
-import { api, getToken, setToken, downloadCsv } from './api.js'
+﻿import { api, getToken, setToken, downloadCsv } from './api.js'
 import {
   fmtDateTime, fmtDate, fmtRelative, pct, severityBadge, statusBadge,
-  escapeHtml, toast, busy, skeleton, emptyState, KIND
+  escapeHtml, toast, busy, skeleton, emptyState, refreshIcons, KIND
 } from './ui.js'
 import { lineChart, barChart, heatmap, money2 } from './charts.js'
 
@@ -40,6 +40,8 @@ function renderLogin (message = '') {
         <button class="btn block" type="submit" id="login-btn" style="margin-top:8px">Entrar</button>
       </form>
     </div>`
+
+  refreshIcons(root)
 
   document.getElementById('login-form').addEventListener('submit', async (ev) => {
     ev.preventDefault()
@@ -91,8 +93,8 @@ function renderApp () {
   })
 
   renderNav()
-go(state.page)
-lucide.createIcons()
+  refreshIcons()
+  go(state.page)
 }
 
 function renderNav () {
@@ -106,9 +108,9 @@ function renderNav () {
     </button>`).join('')
 
   nav.querySelectorAll('.nav-item').forEach((b) =>
-    b.addEventListener('click', () => go(b.dataset.page)
-lucide.createIcons()
-)))
+    b.addEventListener('click', () => go(b.dataset.page)))
+
+  refreshIcons(nav)
 }
 
 const PAGES = {
@@ -132,6 +134,8 @@ async function go (page) {
       main.innerHTML = `<div class="card">${emptyState('info', `Não foi possível carregar: ${err.message}`)}</div>`
     }
   }
+  // Cada página monta o HTML por innerHTML, então os ícones só viram SVG aqui.
+  refreshIcons(main)
 }
 
 function periodPicker () {
@@ -192,7 +196,9 @@ async function pageDashboard (main) {
           <div class="card-title">Violações recentes</div>
           <div class="card-note">Canais vendendo abaixo do site oficial</div>
         </div>
-        <button class="btn ghost small" id="see-all">Ver todas →</button>
+        <button class="btn ghost small" id="see-all">
+          Ver todas <i data-lucide="arrow-right" class="icon-sm"></i>
+        </button>
       </div>
       <div id="recent">${skeleton(200)}</div>
     </div>`
@@ -253,15 +259,42 @@ async function pageDashboard (main) {
       </div>
     </div>
     <div class="card stat">
-      <div class="stat-label">Orçamento SerpAPI · ${b.month}</div>
+      <div class="stat-label">
+        Créditos SerpAPI · ${b.month}
+        ${b.live
+          ? '<span class="badge good"><i data-lucide="wifi" class="icon-sm"></i>saldo real</span>'
+          : '<span class="badge warning"><i data-lucide="wifi-off" class="icon-sm"></i>contagem local</span>'}
+      </div>
       <div class="stat-value">${b.used}<span style="font-size:18px;color:var(--ink-3)"> / ${b.limit}</span></div>
       <div class="stat-meta">
+        ${b.live
+          ? `${b.remaining} restantes na conta${b.planName ? ` · plano ${escapeHtml(b.planName)}` : ''}`
+          : `Sem resposta da conta SerpAPI${b.liveError ? `: ${escapeHtml(b.liveError)}` : ''}`}
+      </div>
+      <div class="stat-meta">
         ${b.willExceed
-          ? `⚠️ No ritmo atual chega a ${b.projected} até o fim do mês`
+          ? `No ritmo atual chega a ${b.projected} até o fim do mês`
           : `${b.perScan} req/varredura · ${b.daysLeft} dias restantes`}
       </div>
       <div class="meter ${budgetTone}"><span style="width:${Math.min(100, b.pctUsed)}%"></span></div>
+      <button class="btn ghost small" id="sync-budget" style="margin-top:8px;padding-left:0">
+        Sincronizar com a SerpAPI
+      </button>
     </div>`
+
+  document.getElementById('sync-budget').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Sincronizando…')
+    try {
+      const r = await api.budgetSync()
+      toast(r.synced
+        ? `Saldo sincronizado: ${r.real} usadas na conta SerpAPI`
+        : `Não foi possível ler a conta: ${r.error}`, r.synced ? 'ok' : 'error')
+      if (r.synced) pageDashboard(main)
+    } catch (err) {
+      toast(err.message, 'error')
+      busy(ev.currentTarget, false)
+    }
+  })
 
   document.getElementById('trend-note').textContent =
     trend.target ? `Diária média em BRL · ${trend.target.label}` : 'Diária média em BRL'
@@ -325,7 +358,9 @@ async function pageRates (main) {
           </div>
         </div>
         ${cheapest ? `<div class="badge ${cheapest.kind === 'direct' ? 'good' : 'critical'}">
-          ${cheapest.kind === 'direct' ? '✓ Direto é o mais barato' : `⛔ ${escapeHtml(cheapest.name)} está mais barato`}
+          ${cheapest.kind === 'direct'
+            ? '<i data-lucide="check" class="icon-sm"></i>Direto é o mais barato'
+            : `<i data-lucide="ban" class="icon-sm"></i>${escapeHtml(cheapest.name)} está mais barato`}
         </div>` : ''}
       </div>
       <div class="table-wrap">
@@ -347,9 +382,9 @@ async function pageRates (main) {
                 <td>${
                   o.kind === 'direct' ? '<span class="badge info">Referência</span>'
                   : o.deltaPct === null ? '<span class="badge neutral">—</span>'
-                  : o.deltaPct < -1 ? '<span class="badge critical"><span aria-hidden="true">⛔</span>Fura paridade</span>'
-                  : o.deltaPct > 1 ? '<span class="badge neutral"><span aria-hidden="true">↑</span>Acima do direto</span>'
-                  : '<span class="badge good"><span aria-hidden="true">✓</span>Em paridade</span>'
+                  : o.deltaPct < -1 ? '<span class="badge critical"><i data-lucide="ban" class="icon-sm"></i>Fura paridade</span>'
+                  : o.deltaPct > 1 ? '<span class="badge neutral"><i data-lucide="arrow-up" class="icon-sm"></i>Acima do direto</span>'
+                  : '<span class="badge good"><i data-lucide="check" class="icon-sm"></i>Em paridade</span>'
                 }</td>
               </tr>`).join('')}
           </tbody>
@@ -671,18 +706,18 @@ async function pageWhatsApp (main) {
         <div class="card-note">Formato do alerta que chega no aparelho</div>
       </div></div>
       <div class="wa-preview">
-        <div class="wa-bubble">🔴 <b>Alerta de Paridade — Enotel BR</b>
+        <div class="wa-bubble"><b>ALERTA DE PARIDADE — Enotel BR</b> [CRITICO]
 
 <b>Enotel Porto de Galinhas</b>
 Varredura de 31/08/2026 06:10
 <b>2</b> violações encontradas
 
-🔴 <b>Booking.com</b> — CRITICO
+<b>[CRITICO] Booking.com</b>
    Check-in 30/09 · 2 noites
    Direto: R$ 1.240,00  →  Canal: R$ 1.078,00
    Diferença: -13,1% (R$ 162,00/noite)
 
-🟡 <b>Trip.com</b> — ATENCAO
+<b>[ATENCAO] Trip.com</b>
    Check-in 30/10 · 2 noites
    Direto: R$ 1.180,00  →  Canal: R$ 1.145,00
    Diferença: -3,0% (R$ 35,00/noite)
@@ -723,10 +758,12 @@ async function renderWaConnection () {
     host.innerHTML = `
       <div class="card-head">
         <div class="card-title">Conexão</div>
-        <span class="badge good"><span aria-hidden="true">✓</span>Conectado</span>
+        <span class="badge good"><i data-lucide="check" class="icon-sm"></i>Conectado</span>
       </div>
       <div class="row" style="gap:14px;margin-bottom:18px">
-        <div class="avatar" style="width:48px;height:48px;font-size:18px">💬</div>
+        <div class="avatar" style="width:48px;height:48px">
+          <i data-lucide="message-circle" class="icon-lg"></i>
+        </div>
         <div>
           <div class="strong">${escapeHtml(status.profileName || 'WhatsApp conectado')}</div>
           <div class="muted small mono">${escapeHtml(status.number || '')}</div>
@@ -749,7 +786,7 @@ async function renderWaConnection () {
   host.innerHTML = `
     <div class="card-head">
       <div class="card-title">Conexão</div>
-      <span class="badge warning"><span aria-hidden="true">⚡</span>${status.instance ? 'Desconectado' : 'Sem instância'}</span>
+      <span class="badge warning"><i data-lucide="zap" class="icon-sm"></i>${status.instance ? 'Desconectado' : 'Sem instância'}</span>
     </div>
     <p class="muted small" style="margin-bottom:16px">
       ${status.instance
@@ -789,7 +826,7 @@ async function renderWaConnection () {
           }
         }, 4000)
       } else if (conn.paircode) {
-        area.innerHTML = `<div class="empty"><div class="empty-icon">🔢</div>
+        area.innerHTML = `<div class="empty"><i data-lucide="hash" class="empty-icon"></i>
           Código de pareamento: <span class="strong mono" style="font-size:20px">${escapeHtml(conn.paircode)}</span></div>`
       } else {
         area.innerHTML = emptyState('info', 'A uazapi não devolveu QR code. Tente novamente em instantes.')
@@ -825,7 +862,7 @@ async function loadContacts () {
         <div class="contact-row" data-jid="${escapeHtml(c.jid)}"
              data-name="${escapeHtml(c.name)}" data-phone="${escapeHtml(c.phone || '')}"
              data-group="${c.isGroup}">
-          <div class="avatar">${c.image ? `<img src="${escapeHtml(c.image)}" alt="">` : (c.isGroup ? '👥' : escapeHtml(c.name.charAt(0).toUpperCase()))}</div>
+          <div class="avatar">${c.image ? `<img src="${escapeHtml(c.image)}" alt="">` : (c.isGroup ? '<i data-lucide="users" class="icon-sm"></i>' : escapeHtml(c.name.charAt(0).toUpperCase()))}</div>
           <div>
             <div class="contact-name">${escapeHtml(c.name)}</div>
             <div class="contact-meta">${c.isGroup ? 'Grupo' : escapeHtml(c.phone || '')}</div>
@@ -872,7 +909,7 @@ async function renderWaRecipients () {
       : `<div class="contact-list" style="margin-bottom:16px">
           ${list.map((r) => `
             <div class="contact-row">
-              <div class="avatar">${r.is_group ? '👥' : escapeHtml(r.name.charAt(0).toUpperCase())}</div>
+              <div class="avatar">${r.is_group ? '<i data-lucide="users" class="icon-sm"></i>' : escapeHtml(r.name.charAt(0).toUpperCase())}</div>
               <div>
                 <div class="contact-name">${escapeHtml(r.name)}</div>
                 <div class="contact-meta">${escapeHtml(r.phone)}</div>
@@ -883,7 +920,9 @@ async function renderWaRecipients () {
                   <input type="checkbox" data-toggle="${r.id}" ${r.active ? 'checked' : ''}>
                   <span class="track"></span>
                 </label>
-                <button class="btn ghost small" data-del="${r.id}" title="Remover">✕</button>
+                <button class="btn ghost small" data-del="${r.id}" title="Remover">
+                  <i data-lucide="x" class="icon-sm"></i>
+                </button>
               </div>
             </div>`).join('')}
         </div>`}
@@ -959,6 +998,23 @@ async function pageSettings (main) {
   const n = s.notifications
 
   document.getElementById('settings-body').innerHTML = `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Diagnóstico da integração</div>
+          <div class="card-note">Verifica chave, saldo real, alvos e última varredura</div>
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn secondary" id="diag-run">Verificar</button>
+          <button class="btn secondary" id="diag-live">Testar busca real</button>
+        </div>
+      </div>
+      <div id="diag-out" class="muted small">
+        A verificação básica é gratuita. "Testar busca real" consome 1 requisição
+        e mostra exatamente quais anunciantes o Google Hotels devolveu.
+      </div>
+    </div>
+
     <div class="grid two">
       <div class="card">
         <div class="card-head"><div>
@@ -1043,7 +1099,8 @@ async function pageSettings (main) {
           <div class="card-note">Cada alvo ativo consome 1 requisição por varredura</div>
         </div>
         <div class="badge ${budget.willExceed ? 'critical' : 'good'}">
-          ${budget.willExceed ? '⛔' : '✓'} projeção ${budget.projected}/${budget.limit}
+          <i data-lucide="${budget.willExceed ? 'ban' : 'check'}" class="icon-sm"></i>
+          projeção ${budget.projected}/${budget.limit}
         </div>
       </div>
       <div class="grid kpi" style="margin-bottom:18px">
@@ -1092,6 +1149,57 @@ async function pageSettings (main) {
           <button class="btn" id="t-add" data-prop="${prop.id}">Adicionar alvo</button>
         </div>`).join('')}
     </div>`
+
+  const renderDiag = (d) => {
+    const out = document.getElementById('diag-out')
+    out.innerHTML = `
+      <div class="stack" style="gap:8px">
+        ${d.steps.map((s) => `
+          <div class="row" style="gap:10px;align-items:flex-start">
+            <span class="badge ${s.ok ? 'good' : 'critical'}" style="min-width:74px;justify-content:center">
+              <i data-lucide="${s.ok ? 'check' : 'x'}" class="icon-sm"></i>${s.ok ? 'OK' : 'Falha'}
+            </span>
+            <div>
+              <div class="strong" style="color:var(--ink)">${escapeHtml(s.step)}</div>
+              <div class="muted small">${escapeHtml(s.detail || '')}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+      ${d.probe ? `
+        <div class="divider"></div>
+        <div class="strong" style="color:var(--ink);margin-bottom:8px">
+          Anunciantes devolvidos pelo Google Hotels
+          <span class="muted small">· ${escapeHtml(d.probe.propertyName || d.probe.query)}
+          · check-in ${fmtDate(d.probe.checkIn)}</span>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Fonte (source)</th><th class="num">Diária</th><th>Canal monitorado</th></tr></thead>
+          <tbody>${d.probe.offers.map((o) => `
+            <tr>
+              <td class="mono">${escapeHtml(o.source)}</td>
+              <td class="num mono">${money2(o.price)}</td>
+              <td>${o.ignored
+                ? '<span class="badge neutral">ignorado</span>'
+                : `<span class="badge good">${escapeHtml(o.matchedChannel)}</span>`}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>
+        ${d.probe.offers.every((o) => o.ignored)
+          ? '<div class="badge critical" style="margin-top:12px">Nenhuma fonte casou com os canais cadastrados — os padrões de nome precisam de ajuste</div>'
+          : ''}` : ''}`
+    refreshIcons(out)
+  }
+
+  document.getElementById('diag-run').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Verificando…')
+    try { renderDiag(await api.diagnose(false)) } catch (err) { toast(err.message, 'error') }
+    busy(ev.currentTarget, false)
+  })
+
+  document.getElementById('diag-live').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Consultando…')
+    try { renderDiag(await api.diagnose(true)) } catch (err) { toast(err.message, 'error') }
+    busy(ev.currentTarget, false)
+  })
 
   document.getElementById('save-parity').addEventListener('click', async (ev) => {
     busy(ev.currentTarget, true, 'Salvando…')

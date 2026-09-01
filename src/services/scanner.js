@@ -62,10 +62,19 @@ async function processTarget (scanId, target, channels, settings, opts) {
 
   // Mapeia ofertas -> canais monitorados. Ofertas de canais nao cadastrados
   // (agencias avulsas) sao descartadas de proposito: nao ha contrato de paridade.
+  const directChannel = channels.find((c) => c.kind === 'direct')
   const observations = []
+  const unmatched = []
+
   for (const offer of offers) {
-    const channel = parity.matchChannel(offer.source, channels)
-    if (!channel) continue
+    // A SerpAPI marca o site do proprio hotel com `official`. Esse sinal e mais
+    // confiavel que o nome, que vem como "Enotel Convention & Spa Porto de
+    // Galinhas" -- nao como "Enotel".
+    const channel = (offer.official && directChannel)
+      ? directChannel
+      : parity.matchChannel(offer.source, channels)
+
+    if (!channel) { unmatched.push(offer.source); continue }
     // Se o mesmo canal aparecer duas vezes, fica a menor tarifa -- e ela que o
     // hospede enxerga e ela que caracteriza a violacao.
     const existing = observations.find((o) => o.channel.id === channel.id)
@@ -112,7 +121,7 @@ async function processTarget (scanId, target, channels, settings, opts) {
     )
   }
 
-  return { spent, rates: observations.length, findings: found.length }
+  return { spent, rates: observations.length, findings: found.length, unmatched }
 }
 
 /**
@@ -142,8 +151,16 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
   let rates = 0
   let findings = 0
   const errors = []
+  // Anunciantes que apareceram mas nao correspondem a nenhum canal cadastrado.
+  // Ficam registrados porque um deles pode estar furando a paridade sem que
+  // ninguem esteja olhando.
+  const unmatched = new Set()
 
   try {
+    // Alinha o contador local ao consumo real da conta antes de decidir
+    // qualquer coisa -- a chave pode ter sido usada fora deste sistema.
+    await budget.syncWithProvider().catch(() => null)
+
     // Checagem previa: se nem o primeiro alvo cabe, aborta sem gastar nada.
     const usage = await budget.getUsage()
     const available = opts.allowReserve ? usage.remaining : usage.scheduledRemaining
@@ -162,6 +179,7 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
         spent += r.spent
         rates += r.rates
         findings += r.findings
+        for (const s of r.unmatched) unmatched.add(s)
         ok += 1
       } catch (err) {
         errors.push(`${target.property_name} / ${target.label}: ${err.message}`)
@@ -171,11 +189,15 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
     }
 
     const status = errors.length === 0 ? 'ok' : (ok > 0 ? 'partial' : 'failed')
+    const notes = [...errors]
+    if (unmatched.size > 0) {
+      notes.push(`Canais nao monitorados na oferta: ${[...unmatched].join(', ')}`)
+    }
     await query(
       `UPDATE scans SET status=$2, finished_at=now(), requests_used=$3, targets_ok=$4,
                         rates_captured=$5, findings_count=$6, message=$7
        WHERE id=$1`,
-      [scanId, status, spent, ok, rates, findings, errors.join(' | ') || null]
+      [scanId, status, spent, ok, rates, findings, notes.join(' | ') || null]
     )
 
     const notification = await notifyScan(scanId).catch((err) => ({

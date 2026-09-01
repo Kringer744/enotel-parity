@@ -89,19 +89,38 @@ export async function findPropertyToken (serpQuery, { checkIn, checkOut, adults 
     adults
   }, opts)
 
-  const candidates = [...(body.properties || []), ...(body.ads || [])]
-  if (candidates.length === 0) {
-    throw new SerpApiError(`Nenhum hotel encontrado para "${serpQuery}"`)
+  // Quando a consulta identifica um unico hotel, o Google Hotels responde com a
+  // PAGINA DO HOTEL: property_token vem na raiz e nao existe `properties`.
+  // Consultas mais amplas devolvem a lista. Os dois formatos sao validos.
+  if (body.property_token) {
+    return { token: body.property_token, name: body.name || serpQuery, shape: 'detail' }
   }
 
-  const wanted = serpQuery.toLowerCase()
-  const exact = candidates.find((p) => (p.name || '').toLowerCase().includes(wanted))
-  const chosen = exact || candidates[0]
+  const candidates = body.properties || []
+  if (candidates.length === 0) {
+    // `ads` sao anuncios de OUTROS hoteis -- usa-los daria o hotel errado.
+    throw new SerpApiError(
+      `Nenhum hotel encontrado para "${serpQuery}". ` +
+      'Use uma consulta que traga o hotel na lista (ex.: incluir cidade e estado).'
+    )
+  }
 
+  // Casa pelo maior numero de palavras da consulta presentes no nome, para nao
+  // pegar um vizinho so porque veio primeiro.
+  const words = serpQuery.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+  let best = null
+  let bestScore = 0
+  for (const p of candidates) {
+    const name = (p.name || '').toLowerCase()
+    const score = words.reduce((n, w) => n + (name.includes(w) ? 1 : 0), 0)
+    if (score > bestScore) { best = p; bestScore = score }
+  }
+
+  const chosen = best || candidates[0]
   if (!chosen.property_token) {
     throw new SerpApiError(`Hotel "${chosen.name}" veio sem property_token`)
   }
-  return { token: chosen.property_token, name: chosen.name }
+  return { token: chosen.property_token, name: chosen.name, shape: 'list' }
 }
 
 // A SerpAPI expoe o preco em varios formatos conforme o anunciante.
@@ -136,7 +155,8 @@ function extractNightly (entry, los) {
 export async function fetchOffers (propertyToken, q, { checkIn, checkOut, adults = 2, los = 1 }, opts = {}) {
   const body = await call({
     ...BASE_PARAMS,
-    q,\n    property_token: propertyToken,
+    q,
+    property_token: propertyToken,
     check_in_date: checkIn,
     check_out_date: checkOut,
     adults
@@ -171,6 +191,46 @@ export async function fetchOffers (propertyToken, q, { checkIn, checkOut, adults
     offers,
     propertyName: body.name || null,
     searchMetadata: body.search_metadata || null
+  }
+}
+
+/**
+ * Busca de diagnostico: devolve as ofertas cruas de um alvo, sem gravar nada.
+ * Serve para conferir quais anunciantes o Google Hotels retorna e se o
+ * casamento com os canais monitorados esta funcionando.
+ */
+export async function probe (target, opts = { allowReserve: true }) {
+  const dates = datesForHorizon(target.horizon_days, target.los)
+  let token = target.serp_property_token
+  let requestsUsed = 0
+
+  if (!token) {
+    const found = await findPropertyToken(target.serp_query, {
+      checkIn: dates.checkIn,
+      checkOut: dates.checkOut,
+      adults: target.adults
+    }, opts)
+    token = found.token
+    requestsUsed += 1
+  }
+
+  const { offers, propertyName } = await fetchOffers(token, target.serp_query, {
+    checkIn: dates.checkIn,
+    checkOut: dates.checkOut,
+    adults: target.adults,
+    los: target.los
+  }, opts)
+  requestsUsed += 1
+
+  return {
+    target: target.label,
+    query: target.serp_query,
+    checkIn: dates.checkIn,
+    checkOut: dates.checkOut,
+    propertyName,
+    tokenWasCached: Boolean(target.serp_property_token),
+    requestsUsed,
+    offers
   }
 }
 

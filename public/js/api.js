@@ -60,6 +60,8 @@ export const api = {
   scans: (limit = 30) => request(`/scans?limit=${limit}`),
   runScan: () => request('/scans/run', { method: 'POST' }),
   budget: () => request('/budget'),
+  budgetSync: () => request('/budget/sync', { method: 'POST' }),
+  diagnose: (live = false) => request(`/serpapi/diagnose${live ? '?live=1' : ''}`),
 
   properties: () => request('/properties'),
   channels: () => request('/channels'),

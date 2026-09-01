@@ -128,7 +128,7 @@ Isto exige uma instância uazapi (contratada em uazapi.com ou self-hosted).
 **Painel** → **Varredura agora**. Leva de 10 a 40 segundos. Confira em
 **Tarifas atuais** se os canais foram capturados e se a tarifa direta apareceu.
 
-⚠️ Cada varredura consome requisições reais do orçamento de 250. Com 3 alvos
+**Atenção:** cada varredura consome requisições reais do orçamento de 250. Com 3 alvos
 ativos, são 3 requisições (4 na primeiríssima, que descobre o `property_token`).
 
 ---

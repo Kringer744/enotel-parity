@@ -5,7 +5,8 @@ import { atLeast } from './parity.js'
 import { getUsage } from '../lib/budget.js'
 
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
-const SEV_ICON = { critical: '🔴', serious: '🟠', warning: '🟡', info: '🔵' }
+// O WhatsApp nao renderiza icones vetoriais: a severidade vai como rotulo de
+// texto em caixa alta, que le bem em qualquer aparelho e em notificacao.
 const SEV_LABEL = { critical: 'CRITICO', serious: 'GRAVE', warning: 'ATENCAO', info: 'INFO' }
 
 function fmtDate (d) {
@@ -25,7 +26,7 @@ export function buildMessage ({ scan, findings, usage, propertyName }) {
   })
 
   if (findings.length === 0) {
-    lines.push('✅ *Paridade OK — Enotel BR*')
+    lines.push('*PARIDADE OK — Enotel BR*')
     lines.push('')
     lines.push(`${propertyName}`)
     lines.push(`Varredura de ${when}`)
@@ -37,7 +38,7 @@ export function buildMessage ({ scan, findings, usage, propertyName }) {
   }
 
   const worst = findings[0]
-  lines.push(`${SEV_ICON[worst.severity]} *Alerta de Paridade — Enotel BR*`)
+  lines.push(`*ALERTA DE PARIDADE — Enotel BR* [${SEV_LABEL[worst.severity]}]`)
   lines.push('')
   lines.push(`*${propertyName}*`)
   lines.push(`Varredura de ${when}`)
@@ -46,14 +47,14 @@ export function buildMessage ({ scan, findings, usage, propertyName }) {
 
   for (const f of findings.slice(0, 8)) {
     if (f.kind === 'missing_direct') {
-      lines.push(`${SEV_ICON[f.severity]} *Site oficial ausente* — ${fmtDate(f.check_in)}`)
+      lines.push(`*[${SEV_LABEL[f.severity]}] Site oficial ausente* — ${fmtDate(f.check_in)}`)
       lines.push('   Sem tarifa direta publicada para comparacao.')
       lines.push('')
       continue
     }
 
     const sign = f.delta_pct < 0 ? '' : '+'
-    lines.push(`${SEV_ICON[f.severity]} *${f.channel_name}* — ${SEV_LABEL[f.severity]}`)
+    lines.push(`*[${SEV_LABEL[f.severity]}] ${f.channel_name}*`)
     lines.push(`   Check-in ${fmtDate(f.check_in)} · ${f.los || 2} noites`)
     lines.push(`   Direto: ${BRL.format(f.base_price)}  →  Canal: ${BRL.format(f.channel_price)}`)
     lines.push(`   Diferenca: ${sign}${Number(f.delta_pct).toFixed(1)}% (${BRL.format(Math.abs(f.delta_abs))}/noite)`)
@@ -158,7 +159,7 @@ export async function notifyScan (scanId) {
 /** Envio de teste, para validar a conexao sem esperar a proxima varredura. */
 export async function sendTest (to) {
   const text = [
-    '🔔 *Teste — Enotel Paridade*',
+    '*TESTE — Enotel Paridade*',
     '',
     'Se voce recebeu esta mensagem, a integracao com o WhatsApp esta funcionando.',
     'Os alertas de paridade chegarao neste contato.'

@@ -67,6 +67,14 @@ export function escapeHtml (s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 
+/**
+ * Substitui os <i data-lucide> por SVG. Precisa rodar DEPOIS de cada innerHTML.
+ * O guard evita quebrar a tela inteira se o CDN do lucide nao carregar.
+ */
+export function refreshIcons (root = document.body) {
+  try { window.lucide?.createIcons({ root }) } catch { /* CDN indisponivel */ }
+}
+
 let toastHost = null
 
 export function toast (message, kind = 'info', ms = 4200) {
@@ -80,7 +88,7 @@ export function toast (message, kind = 'info', ms = 4200) {
   el.className = `toast ${kind}`
   el.innerHTML = `<i data-lucide="${icon}" class="icon-sm"></i><span>${escapeHtml(message)}</span>`
   toastHost.appendChild(el)
-  lucide.createIcons({ root: el })
+  refreshIcons(el)
   setTimeout(() => {
     el.style.opacity = '0'
     el.style.transform = 'translateX(20px)'

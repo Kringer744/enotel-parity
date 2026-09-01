@@ -4,7 +4,15 @@
    eixo, legenda sempre presente para 2+ séries, rótulos diretos seletivos.
    Texto nunca veste a cor da série — a identidade vem da marca colorida ao lado. */
 
+import { refreshIcons } from './ui.js'
+
 const NS = 'http://www.w3.org/2000/svg'
+
+/** Estado vazio com ícone Lucide, já convertido em SVG. */
+function renderEmpty (host, icon, text) {
+  host.innerHTML = `<div class="empty"><i data-lucide="${icon}" class="empty-icon"></i>${text}</div>`
+  refreshIcons(host)
+}
 
 const BRL = new Intl.NumberFormat('pt-BR', {
   style: 'currency', currency: 'BRL', maximumFractionDigits: 0
@@ -107,7 +115,7 @@ export function lineChart (host, { dates, series, height = 300, valueFmt = money
   const live = series.filter((s) => s.values.some((v) => v !== null))
 
   if (dates.length === 0 || live.length === 0) {
-    host.innerHTML = '<div class="empty"><div class="empty-icon">📈</div>Sem dados no período. Rode uma varredura para começar a série.</div>'
+    renderEmpty(host, 'trending-up', 'Sem dados no período. Rode uma varredura para começar a série.')
     return
   }
 
@@ -251,7 +259,7 @@ export function lineChart (host, { dates, series, height = 300, valueFmt = money
 export function barChart (host, { items, height = null, valueFmt = (v) => `${v}%`, max = null }) {
   host.classList.add('chart')
   if (items.length === 0) {
-    host.innerHTML = '<div class="empty"><div class="empty-icon">📊</div>Sem dados no período.</div>'
+    renderEmpty(host, 'bar-chart-3', 'Sem dados no período.')
     return
   }
 
@@ -330,7 +338,7 @@ const BLUE_RAMP = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f
 
 export function heatmap (host, { rows, dates, valueKey = 'violations' }) {
   if (rows.length === 0 || dates.length === 0) {
-    host.innerHTML = '<div class="empty"><div class="empty-icon">🗓️</div>Sem violações registradas no período.</div>'
+    renderEmpty(host, 'calendar', 'Sem violações registradas no período.')
     return
   }
 
