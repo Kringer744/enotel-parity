@@ -4,6 +4,7 @@ import * as parity from './parity.js'
 import * as budget from '../lib/budget.js'
 import { getSettings } from './settings.js'
 import { notifyScan } from './notifier.js'
+import { ensureAutoTargets } from '../jobs/autoTargets.js'
 
 let running = false
 
@@ -176,6 +177,9 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
   // Antes de contar alvos: retira os de data fixa que ja passaram, senao eles
   // entrariam no orcamento desta varredura.
   const expired = await expirePastTargets().catch(() => [])
+  // Gera os periodos da semana (fim de semana e meio de semana). So age as
+  // tercas, ou no primeiro boot, para o sistema ja subir com dados.
+  const auto = await ensureAutoTargets().catch(() => ({ generated: [] }))
   const targets = await loadTargets()
   // Disparo manual pode usar a reserva de emergencia; o agendador nunca pode.
   const opts = { allowReserve: trigger === 'manual' }
@@ -235,6 +239,9 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
     }
     if (expired.length > 0) {
       notes.push(`Alvos de data fixa expirados e desativados: ${expired.join(', ')}`)
+    }
+    if (auto.generated?.length > 0) {
+      notes.push(`Periodos automaticos criados: ${auto.generated.join(', ')}`)
     }
     await query(
       `UPDATE scans SET status=$2, finished_at=now(), requests_used=$3, targets_ok=$4,

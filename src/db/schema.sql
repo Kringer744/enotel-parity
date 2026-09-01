@@ -62,6 +62,8 @@ ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_in  DATE;
 ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_out DATE;
 -- horizon_days so faz sentido no modo 'rolling'
 ALTER TABLE scan_targets ALTER COLUMN horizon_days DROP NOT NULL;
+-- 'weekend' | 'midweek' quando o alvo foi gerado automaticamente; NULL se manual
+ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS auto_key TEXT;
 
 -- Evita cadastrar a mesma estadia duas vezes. Parcial: nao afeta 'rolling',
 -- que ja tem a sua propria UNIQUE.

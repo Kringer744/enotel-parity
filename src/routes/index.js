@@ -7,6 +7,7 @@ import * as uazapi from '../services/uazapi.js'
 import * as notifier from '../services/notifier.js'
 import { getSettings, updateSetting } from '../services/settings.js'
 import { matchChannel } from '../services/parity.js'
+import { computeAutoPeriods, ensureAutoTargets } from '../jobs/autoTargets.js'
 import { getUsage, forecast, fetchAccount, syncWithProvider } from '../lib/budget.js'
 import { config } from '../config.js'
 
@@ -216,6 +217,23 @@ router.get('/properties', wrap(async (req, res) => {
      GROUP BY p.id ORDER BY p.id`
   )
   res.json(rows)
+}))
+
+// Periodos que a geracao automatica criaria agora -- para a tela mostrar antes
+// de o usuario ligar a opcao.
+router.get('/targets/auto/preview', wrap(async (req, res) => {
+  const settings = await getSettings()
+  res.json({
+    enabled: settings.auto_targets.enabled,
+    adults: settings.auto_targets.adults,
+    periods: computeAutoPeriods()
+  })
+}))
+
+router.post('/targets/auto/generate', wrap(async (req, res) => {
+  const result = await ensureAutoTargets({ force: true })
+  await audit(req.user.email, 'targets.auto.generate', result)
+  res.json(result)
 }))
 
 const DATE_RX = /^\d{4}-\d{2}-\d{2}$/

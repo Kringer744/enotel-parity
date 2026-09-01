@@ -1156,7 +1156,9 @@ async function pageSettings (main) {
     </div>
     <div id="settings-body">${loading('Carregando configurações...', 420)}</div>`
 
-  const [s, props, budget] = await Promise.all([api.settings(), api.properties(), api.budget()])
+  const [s, props, budget, auto] = await Promise.all([
+    api.settings(), api.properties(), api.budget(), api.autoPreview()
+  ])
   const p = s.parity
   const n = s.notifications
 
@@ -1295,7 +1297,10 @@ async function pageSettings (main) {
                 <tr>
                   <td class="strong">${escapeHtml(t.label)}</td>
                   <td>${t.mode === 'fixed'
-                    ? '<span class="badge info"><i data-lucide="calendar-check" class="icon-sm"></i>Data fixa</span>'
+                    ? `<span class="badge info"><i data-lucide="calendar-check" class="icon-sm"></i>Data fixa</span>${
+                        t.auto_key
+                          ? ' <span class="badge neutral"><i data-lucide="sparkles" class="icon-sm"></i>auto</span>'
+                          : ''}`
                     : '<span class="badge neutral"><i data-lucide="repeat" class="icon-sm"></i>Janela móvel</span>'}</td>
                   <td class="mono">${t.mode === 'fixed'
                     ? `${fmtDate(t.check_in)} <span class="muted">→</span> ${fmtDate(t.check_out)}`
@@ -1312,8 +1317,33 @@ async function pageSettings (main) {
         </div>
 
         <div class="divider"></div>
+        <div class="row between" style="margin-bottom:10px">
+          <div>
+            <div class="strong">Períodos automáticos</div>
+            <div class="muted small">
+              Toda terça o sistema cria o fim de semana e o meio de semana seguinte
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="auto-enabled" ${auto.enabled ? 'checked' : ''}>
+            <span class="track"></span>
+          </label>
+        </div>
+        <div class="auto-periods">
+          ${auto.periods.map((p) => `
+            <div class="auto-period">
+              <i data-lucide="${p.key === 'weekend' ? 'sun' : 'briefcase'}" class="icon-sm"></i>
+              <div>
+                <div class="strong small">${p.key === 'weekend' ? 'Fim de semana' : 'Meio de semana'}</div>
+                <div class="muted small mono">${fmtDate(p.checkIn)} → ${fmtDate(p.checkOut)}</div>
+              </div>
+            </div>`).join('')}
+          <button class="btn secondary small" id="auto-gen">Gerar agora</button>
+        </div>
+
+        <div class="divider"></div>
         <div class="row between" style="margin-bottom:12px">
-          <div class="strong">Adicionar período</div>
+          <div class="strong">Adicionar período manual</div>
           <div class="segmented" id="t-mode">
             <button data-mode="fixed" class="active">Data fixa</button>
             <button data-mode="rolling">Janela móvel</button>
@@ -1504,6 +1534,26 @@ async function pageSettings (main) {
         label: document.getElementById('t-rlabel').value.trim()
       })
       toast('Janela móvel adicionada', 'ok')
+      pageSettings(main)
+    } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
+  })
+
+  document.getElementById('auto-enabled')?.addEventListener('change', async (ev) => {
+    try {
+      await api.updateSettings('auto_targets', { enabled: ev.target.checked })
+      toast(ev.target.checked
+        ? 'Períodos automáticos ativados'
+        : 'Períodos automáticos desativados — os já criados continuam ativos', 'ok')
+    } catch (err) { toast(err.message, 'error'); ev.target.checked = !ev.target.checked }
+  })
+
+  document.getElementById('auto-gen')?.addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Gerando...')
+    try {
+      const r = await api.autoGenerate()
+      toast(r.generated.length > 0
+        ? `${r.generated.length} período(s) criado(s)`
+        : 'Os períodos desta semana já existem', r.generated.length > 0 ? 'ok' : 'info')
       pageSettings(main)
     } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
   })

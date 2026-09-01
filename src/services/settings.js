@@ -18,6 +18,11 @@ const DEFAULTS = {
     instance_token: null,
     instance_name: null,
     connected_number: null
+  },
+  // Geracao automatica de periodos, toda terca (ver jobs/autoTargets.js)
+  auto_targets: {
+    enabled: true,
+    adults: 2
   }
 }
 

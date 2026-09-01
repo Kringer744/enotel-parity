@@ -67,6 +67,8 @@ export const api = {
   properties: () => request('/properties'),
   channels: () => request('/channels'),
   createTarget: (body) => request('/targets', { method: 'POST', body }),
+  autoPreview: () => request('/targets/auto/preview'),
+  autoGenerate: () => request('/targets/auto/generate', { method: 'POST' }),
   toggleTarget: (id, active) => request(`/targets/${id}`, { method: 'PATCH', body: { active } }),
   deleteTarget: (id) => request(`/targets/${id}`, { method: 'DELETE' }),
 

@@ -677,6 +677,25 @@ tbody tr:hover { background: var(--surface-2); }
   .rank-bar, .rank-row > .badge { display: none; }
 }
 
+/* ─── Períodos automáticos ──────────────────────────────────────────────── */
+
+.auto-periods {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-md);
+}
+.auto-period {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-sm);
+  flex: 1; min-width: 190px;
+}
+.auto-period svg { color: var(--ink-3); flex-shrink: 0; }
+.auto-periods .btn { margin-left: auto; }
+
 /* ─── Seletor de período ────────────────────────────────────────────────── */
 
 .date-picker {
