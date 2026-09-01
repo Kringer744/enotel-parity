@@ -9,12 +9,12 @@ const root = document.getElementById('root')
 const state = { user: null, page: 'dashboard', days: 30, openCount: 0 }
 
 const NAV = [
-  { id: 'dashboard', emoji: '📊', label: 'Painel' },
-  { id: 'rates', emoji: '🏷️', label: 'Tarifas atuais' },
-  { id: 'findings', emoji: '⚠️', label: 'Violações', badge: true },
-  { id: 'report', emoji: '📄', label: 'Relatório' },
-  { id: 'whatsapp', emoji: '💬', label: 'WhatsApp' },
-  { id: 'settings', emoji: '⚙️', label: 'Configurações' }
+  { id: 'dashboard', icon: 'layout-dashboard', label: 'Painel' },
+  { id: 'rates', icon: 'tags', label: 'Tarifas atuais' },
+  { id: 'findings', icon: 'alert-triangle', label: 'Violações', badge: true },
+  { id: 'report', icon: 'file-bar-chart', label: 'Relatório' },
+  { id: 'whatsapp', icon: 'message-circle', label: 'WhatsApp' },
+  { id: 'settings', icon: 'settings', label: 'Configurações' }
 ]
 
 /* ═══ Login ═══════════════════════════════════════════════════════════════ */
@@ -23,7 +23,7 @@ function renderLogin (message = '') {
   root.innerHTML = `
     <div class="login-shell">
       <form class="login-card" id="login-form">
-        <div class="login-mark">🏨</div>
+        <div class="login-mark"><i data-lucide="shield-check" class="icon-lg"></i></div>
         <h1 style="font-size:22px">Paridade Enotel</h1>
         <p class="page-sub" style="margin-bottom:26px">
           Monitoramento tarifário nas principais OTAs
@@ -91,7 +91,8 @@ function renderApp () {
   })
 
   renderNav()
-  go(state.page)
+go(state.page)
+lucide.createIcons()
 }
 
 function renderNav () {
@@ -99,13 +100,15 @@ function renderNav () {
   if (!nav) return
   nav.innerHTML = NAV.map((n) => `
     <button class="nav-item ${state.page === n.id ? 'active' : ''}" data-page="${n.id}">
-      <span class="nav-icon" aria-hidden="true">${n.emoji}</span>
+      <i data-lucide="${n.icon}" class="nav-icon"></i>
       <span>${n.label}</span>
       ${n.badge && state.openCount > 0 ? `<span class="nav-badge">${state.openCount}</span>` : ''}
     </button>`).join('')
 
   nav.querySelectorAll('.nav-item').forEach((b) =>
-    b.addEventListener('click', () => go(b.dataset.page)))
+    b.addEventListener('click', () => go(b.dataset.page)
+lucide.createIcons()
+)))
 }
 
 const PAGES = {
@@ -126,7 +129,7 @@ async function go (page) {
     await PAGES[page](main)
   } catch (err) {
     if (err.status !== 401) {
-      main.innerHTML = `<div class="card">${emptyState('⚠️', `Não foi possível carregar: ${err.message}`)}</div>`
+      main.innerHTML = `<div class="card">${emptyState('info', `Não foi possível carregar: ${err.message}`)}</div>`
     }
   }
 }
@@ -304,7 +307,7 @@ async function pageRates (main) {
   const host = document.getElementById('rates')
 
   if (groups.length === 0) {
-    host.innerHTML = `<div class="card">${emptyState('🏷️', 'Nenhuma tarifa coletada ainda. Rode uma varredura no Painel.')}</div>`
+    host.innerHTML = `<div class="card">${emptyState('info', 'Nenhuma tarifa coletada ainda. Rode uma varredura no Painel.')}</div>`
     return
   }
 
@@ -360,7 +363,7 @@ async function pageRates (main) {
 
 function findingsTable (findings) {
   if (findings.length === 0) {
-    return emptyState('✅', 'Nenhuma violação de paridade no período. Todos os canais em conformidade.')
+    return emptyState('info', 'Nenhuma violação de paridade no período. Todos os canais em conformidade.')
   }
   return `
     <div class="table-wrap">
@@ -705,14 +708,14 @@ async function renderWaConnection () {
   try {
     status = await api.waStatus()
   } catch (err) {
-    host.innerHTML = emptyState('⚠️', err.message)
+    host.innerHTML = emptyState('info', err.message)
     return
   }
 
   if (!status.configured) {
     host.innerHTML = `
       <div class="card-head"><div class="card-title">Conexão</div></div>
-      ${emptyState('🔌', 'Defina UAZAPI_URL e UAZAPI_ADMIN_TOKEN nas variáveis de ambiente do EasyPanel para habilitar o WhatsApp.')}`
+      ${emptyState('info', 'Defina UAZAPI_URL e UAZAPI_ADMIN_TOKEN nas variáveis de ambiente do EasyPanel para habilitar o WhatsApp.')}`
     return
   }
 
@@ -789,7 +792,7 @@ async function renderWaConnection () {
         area.innerHTML = `<div class="empty"><div class="empty-icon">🔢</div>
           Código de pareamento: <span class="strong mono" style="font-size:20px">${escapeHtml(conn.paircode)}</span></div>`
       } else {
-        area.innerHTML = emptyState('⏳', 'A uazapi não devolveu QR code. Tente novamente em instantes.')
+        area.innerHTML = emptyState('info', 'A uazapi não devolveu QR code. Tente novamente em instantes.')
       }
     } catch (err) {
       toast(err.message, 'error')
@@ -806,7 +809,7 @@ async function loadContacts () {
   try {
     const contacts = await api.waContacts()
     if (contacts.length === 0) {
-      host.innerHTML = emptyState('👤', 'Nenhuma conversa encontrada. Envie uma mensagem pelo celular e recarregue.')
+      host.innerHTML = emptyState('info', 'Nenhuma conversa encontrada. Envie uma mensagem pelo celular e recarregue.')
       return
     }
     host.innerHTML = `
@@ -848,7 +851,7 @@ async function loadContacts () {
     draw()
     document.getElementById('c-search').addEventListener('input', (ev) => draw(ev.target.value))
   } catch (err) {
-    host.innerHTML = emptyState('⚠️', err.message)
+    host.innerHTML = emptyState('info', err.message)
   }
 }
 
@@ -865,7 +868,7 @@ async function renderWaRecipients () {
       </div>
     </div>
     ${list.length === 0
-      ? emptyState('📭', 'Nenhum destinatário. Conecte o WhatsApp e selecione um contato, ou adicione um número abaixo.')
+      ? emptyState('info', 'Nenhum destinatário. Conecte o WhatsApp e selecione um contato, ou adicione um número abaixo.')
       : `<div class="contact-list" style="margin-bottom:16px">
           ${list.map((r) => `
             <div class="contact-row">
@@ -927,7 +930,7 @@ async function renderWaLog () {
   if (!host) return
   const log = await api.waNotifications().catch(() => [])
   host.innerHTML = log.length === 0
-    ? emptyState('📨', 'Nenhum alerta enviado ainda.')
+    ? emptyState('info', 'Nenhum alerta enviado ainda.')
     : `<div class="table-wrap"><table>
         <thead><tr><th>Quando</th><th>Destinatário</th><th>Status</th><th>Observação</th></tr></thead>
         <tbody>${log.map((n) => `
@@ -1164,3 +1167,4 @@ async function boot () {
 }
 
 boot()
+
