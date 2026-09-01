@@ -66,12 +66,16 @@ export async function overview () {
  * Fixa um unico alvo (horizonte) para nao misturar niveis de preco diferentes.
  */
 export async function priceTrend ({ days = 30, targetId = null } = {}) {
+  // Devolve todos os alvos para a interface poder oferecer o seletor; o
+  // grafico plota um de cada vez, senao misturaria niveis de preco.
   const { rows: targets } = await query(
-    `SELECT t.id, t.label FROM scan_targets t JOIN properties p ON p.id = t.property_id
-     WHERE t.active AND p.active ORDER BY t.horizon_days LIMIT 1`
+    `SELECT t.id, t.label, t.mode, t.check_in, t.check_out, t.horizon_days
+     FROM scan_targets t JOIN properties p ON p.id = t.property_id
+     WHERE t.active AND p.active
+     ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
   )
   const target = targetId || targets[0]?.id
-  if (!target) return { target: null, dates: [], series: [] }
+  if (!target) return { target: null, targets: [], dates: [], series: [] }
 
   const { rows } = await query(
     `SELECT date_trunc('day', r.captured_at AT TIME ZONE 'America/Recife')::date AS day,
@@ -103,6 +107,12 @@ export async function priceTrend ({ days = 30, targetId = null } = {}) {
 
   return {
     target: targets.find((t) => t.id === target) || null,
+    targets: targets.map((t) => ({
+      id: t.id,
+      label: t.label,
+      mode: t.mode,
+      checkIn: t.check_in ? t.check_in.toISOString().slice(0, 10) : null
+    })),
     dates,
     series
   }
@@ -199,12 +209,12 @@ export async function currentRates () {
      )
      SELECT r.check_in, r.check_out, r.los, r.price, r.currency,
             c.slug, c.name AS channel_name, c.color, c.kind,
-            t.label AS target_label, t.horizon_days
+            t.label AS target_label, t.horizon_days, t.mode
      FROM rates r
      JOIN channels c ON c.id = r.channel_id
      LEFT JOIN scan_targets t ON t.id = r.target_id
      WHERE r.scan_id = (SELECT id FROM last)
-     ORDER BY t.horizon_days, c.sort_order`
+     ORDER BY r.check_in, c.sort_order`
   )
 
   const groups = new Map()
@@ -217,6 +227,7 @@ export async function currentRates () {
         los: r.los,
         targetLabel: r.target_label,
         horizonDays: r.horizon_days,
+        mode: r.mode || 'rolling',
         offers: []
       })
     }
@@ -230,7 +241,8 @@ export async function currentRates () {
   }
 
   // Anexa o desvio de cada OTA contra a tarifa direta do mesmo bloco.
-  const out = [...groups.values()].sort((a, b) => a.horizonDays - b.horizonDays)
+  // Ordena por data de check-in: horizonDays e nulo nos alvos de data fixa.
+  const out = [...groups.values()].sort((a, b) => a.checkIn.localeCompare(b.checkIn))
   for (const g of out) {
     const direct = g.offers.find((o) => o.kind === 'direct')
     g.directPrice = direct ? direct.price : null

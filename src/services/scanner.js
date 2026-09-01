@@ -23,9 +23,45 @@ async function loadTargets () {
      FROM scan_targets t
      JOIN properties p ON p.id = t.property_id
      WHERE t.active AND p.active
-     ORDER BY p.id, t.horizon_days`
+     ORDER BY p.id, COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
   )
   return rows
+}
+
+const iso = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10))
+
+/**
+ * Resolve as datas do alvo conforme o modo. No modo 'fixed' o numero de noites
+ * vem da propria diferenca entre as datas -- nao da coluna los, que so descreve
+ * a janela movel.
+ */
+function resolveDates (target) {
+  if (target.mode === 'fixed') {
+    const checkIn = iso(target.check_in)
+    const checkOut = iso(target.check_out)
+    const nights = Math.max(
+      1,
+      Math.round((new Date(`${checkOut}T12:00:00Z`) - new Date(`${checkIn}T12:00:00Z`)) / 86400000)
+    )
+    return { checkIn, checkOut, los: nights }
+  }
+  return { ...serp.datesForHorizon(target.horizon_days, target.los), los: target.los }
+}
+
+/**
+ * Alvos de data fixa viram lixo depois que o check-in passa: continuariam
+ * gastando requisicoes para consultar uma estadia que ja aconteceu.
+ */
+async function expirePastTargets () {
+  const { rows } = await query(
+    `UPDATE scan_targets SET active = FALSE
+     WHERE active AND mode = 'fixed' AND check_in <= CURRENT_DATE
+     RETURNING label`
+  )
+  if (rows.length > 0) {
+    console.log(`[scan] ${rows.length} alvo(s) de data fixa expiraram: ${rows.map((r) => r.label).join(', ')}`)
+  }
+  return rows.map((r) => r.label)
 }
 
 /** Garante o property_token em cache; custa 1 requisicao apenas na primeira vez. */
@@ -46,7 +82,8 @@ async function ensureToken (target, dates, opts) {
 }
 
 async function processTarget (scanId, target, channels, settings, opts) {
-  const dates = serp.datesForHorizon(target.horizon_days, target.los)
+  const dates = resolveDates(target)
+  const los = dates.los
   let spent = 0
 
   const { token, spent: tokenSpent } = await ensureToken(target, dates, opts)
@@ -56,7 +93,7 @@ async function processTarget (scanId, target, channels, settings, opts) {
     checkIn: dates.checkIn,
     checkOut: dates.checkOut,
     adults: target.adults,
-    los: target.los
+    los
   }, opts)
   spent += 1
 
@@ -94,7 +131,7 @@ async function processTarget (scanId, target, channels, settings, opts) {
                           los, adults, price, currency, source_raw)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [scanId, target.property_id, o.channel.id, target.id, dates.checkIn, dates.checkOut,
-        target.los, target.adults, o.price, target.currency, o.sourceRaw]
+        los, target.adults, o.price, target.currency, o.sourceRaw]
     )
   }
 
@@ -136,6 +173,9 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
 
   const settings = await getSettings()
   const channels = await loadChannels()
+  // Antes de contar alvos: retira os de data fixa que ja passaram, senao eles
+  // entrariam no orcamento desta varredura.
+  const expired = await expirePastTargets().catch(() => [])
   const targets = await loadTargets()
   // Disparo manual pode usar a reserva de emergencia; o agendador nunca pode.
   const opts = { allowReserve: trigger === 'manual' }
@@ -192,6 +232,9 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
     const notes = [...errors]
     if (unmatched.size > 0) {
       notes.push(`Canais nao monitorados na oferta: ${[...unmatched].join(', ')}`)
+    }
+    if (expired.length > 0) {
+      notes.push(`Alvos de data fixa expirados e desativados: ${expired.join(', ')}`)
     }
     await query(
       `UPDATE scans SET status=$2, finished_at=now(), requests_used=$3, targets_ok=$4,

@@ -48,7 +48,8 @@ export const api = {
   me: () => request('/auth/me'),
 
   overview: () => request('/overview'),
-  trend: (days) => request(`/trend?days=${days}`),
+  trend: (days, target = null) =>
+    request(`/trend?days=${days}${target ? `&target=${target}` : ''}`),
   compliance: (days) => request(`/compliance?days=${days}`),
   heatmap: (days) => request(`/heatmap?days=${days}`),
   findings: (params = {}) => request(`/findings?${new URLSearchParams(params)}`),

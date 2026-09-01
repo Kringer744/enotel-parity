@@ -38,16 +38,36 @@ CREATE TABLE IF NOT EXISTS properties (
 );
 
 -- Cada alvo = 1 requisicao SerpAPI por varredura. E aqui que o orcamento e gasto.
+--
+-- Dois modos:
+--   'rolling' -- janela movel: check-in = hoje + horizon_days. A data anda todo
+--                dia, entao serve para acompanhar o comportamento geral do
+--                canal, nao a curva de uma estadia especifica.
+--   'fixed'   -- data de calendario fixa. Amostrada todo dia, revela a curva
+--                real de preco daquela estadia conforme ela se aproxima.
 CREATE TABLE IF NOT EXISTS scan_targets (
   id           SERIAL PRIMARY KEY,
   property_id  INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
   label        TEXT NOT NULL,
-  horizon_days INTEGER NOT NULL,             -- check-in = hoje + horizon_days
-  los          INTEGER NOT NULL DEFAULT 2,   -- noites
+  horizon_days INTEGER NOT NULL,
+  los          INTEGER NOT NULL DEFAULT 2,
   adults       INTEGER NOT NULL DEFAULT 2,
   active       BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE (property_id, horizon_days, los, adults)
 );
+
+-- Colunas do modo 'fixed'. Idempotente: bancos ja provisionados recebem aqui.
+ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'rolling';
+ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_in  DATE;
+ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_out DATE;
+-- horizon_days so faz sentido no modo 'rolling'
+ALTER TABLE scan_targets ALTER COLUMN horizon_days DROP NOT NULL;
+
+-- Evita cadastrar a mesma estadia duas vezes. Parcial: nao afeta 'rolling',
+-- que ja tem a sua propria UNIQUE.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_targets_fixed
+  ON scan_targets (property_id, check_in, check_out, adults)
+  WHERE mode = 'fixed';
 
 CREATE TABLE IF NOT EXISTS scans (
   id             SERIAL PRIMARY KEY,

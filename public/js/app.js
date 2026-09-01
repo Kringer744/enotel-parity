@@ -6,7 +6,14 @@ import {
 import { lineChart, barChart, heatmap, money2 } from './charts.js'
 
 const root = document.getElementById('root')
-const state = { user: null, page: 'dashboard', days: 30, openCount: 0 }
+const state = { user: null, page: 'dashboard', days: 30, openCount: 0, trendTarget: null }
+
+// Piso do seletor de check-in: uma estadia que já começou não tem oferta.
+const TOMORROW = (() => {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+})()
 
 const NAV = [
   { id: 'dashboard', icon: 'layout-dashboard', label: 'Painel' },
@@ -186,6 +193,7 @@ async function pageDashboard (main) {
             <div class="card-title">Tarifa média por canal</div>
             <div class="card-note" id="trend-note">Diária média em BRL</div>
           </div>
+          <select class="select" id="trend-target" style="width:auto;max-width:210px" hidden></select>
         </div>
         <div id="trend">${loading('Carregando série histórica...', 300)}</div>
       </div>
@@ -233,7 +241,7 @@ async function pageDashboard (main) {
   })
 
   const [ov, trend, compliance, findings, rates] = await Promise.all([
-    api.overview(), api.trend(state.days), api.compliance(state.days),
+    api.overview(), api.trend(state.days, state.trendTarget), api.compliance(state.days),
     api.findings({ days: state.days, limit: 8 }), api.currentRates()
   ])
 
@@ -307,8 +315,28 @@ async function pageDashboard (main) {
     }
   })
 
+  // Um alvo por vez: plotar juntos misturaria níveis de preço de check-ins
+  // diferentes e a curva não significaria nada.
+  const targetSelect = document.getElementById('trend-target')
+  if ((trend.targets || []).length > 1) {
+    targetSelect.hidden = false
+    targetSelect.innerHTML = trend.targets.map((t) => `
+      <option value="${t.id}" ${trend.target?.id === t.id ? 'selected' : ''}>
+        ${escapeHtml(t.label)}
+      </option>`).join('')
+    targetSelect.addEventListener('change', () => {
+      state.trendTarget = Number(targetSelect.value)
+      pageDashboard(main)
+    })
+  }
+
   document.getElementById('trend-note').textContent =
-    trend.target ? `Diária média em BRL · ${trend.target.label}` : 'Diária média em BRL'
+    trend.target
+      ? (trend.target.mode === 'fixed'
+          ? `Diária média em BRL · check-in ${fmtDate(trend.target.check_in)}`
+          : `Diária média em BRL · ${trend.target.label}`)
+      : 'Diária média em BRL'
+
   lineChart(document.getElementById('trend'), {
     dates: trend.dates,
     series: trend.series.map((s) => ({ name: s.name, color: s.color, values: s.values })),
@@ -1260,13 +1288,18 @@ async function pageSettings (main) {
           <span class="muted small">· ${escapeHtml(prop.city || '')}</span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Alvo</th><th class="num">Check-in em</th><th class="num">Noites</th>
-              <th class="num">Adultos</th><th>Ativo</th><th></th></tr></thead>
+            <thead><tr><th>Alvo</th><th>Tipo</th><th>Período</th><th class="num">Noites</th>
+              <th class="num">Hóspedes</th><th>Ativo</th><th></th></tr></thead>
             <tbody>
               ${prop.targets.map((t) => `
                 <tr>
                   <td class="strong">${escapeHtml(t.label)}</td>
-                  <td class="num mono">+${t.horizon_days} dias</td>
+                  <td>${t.mode === 'fixed'
+                    ? '<span class="badge info"><i data-lucide="calendar-check" class="icon-sm"></i>Data fixa</span>'
+                    : '<span class="badge neutral"><i data-lucide="repeat" class="icon-sm"></i>Janela móvel</span>'}</td>
+                  <td class="mono">${t.mode === 'fixed'
+                    ? `${fmtDate(t.check_in)} <span class="muted">→</span> ${fmtDate(t.check_out)}`
+                    : `hoje +${t.horizon_days} dias`}</td>
                   <td class="num mono">${t.los}</td>
                   <td class="num mono">${t.adults}</td>
                   <td><label class="switch">
@@ -1277,12 +1310,67 @@ async function pageSettings (main) {
             </tbody>
           </table>
         </div>
-        <div class="row wrap" style="gap:8px;margin-top:14px">
-          <input class="input" id="t-label" placeholder="Nome do alvo" style="flex:2;min-width:150px">
-          <input class="input" id="t-horizon" type="number" placeholder="Dias" style="flex:1;min-width:90px">
-          <input class="input" id="t-los" type="number" value="2" placeholder="Noites" style="flex:1;min-width:90px">
-          <button class="btn" id="t-add" data-prop="${prop.id}">Adicionar alvo</button>
-        </div>`).join('')}
+
+        <div class="divider"></div>
+        <div class="row between" style="margin-bottom:12px">
+          <div class="strong">Adicionar período</div>
+          <div class="segmented" id="t-mode">
+            <button data-mode="fixed" class="active">Data fixa</button>
+            <button data-mode="rolling">Janela móvel</button>
+          </div>
+        </div>
+
+        <div id="t-form-fixed" class="date-picker">
+          <div class="date-field">
+            <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
+            <input class="input" type="date" id="t-checkin" min="${TOMORROW}">
+          </div>
+          <div class="date-field">
+            <label><i data-lucide="calendar" class="icon-sm"></i>Check-out</label>
+            <input class="input" type="date" id="t-checkout" min="${TOMORROW}">
+          </div>
+          <div class="date-field" style="max-width:140px">
+            <label><i data-lucide="users" class="icon-sm"></i>Hóspedes</label>
+            <select class="select" id="t-adults">
+              ${[1, 2, 3, 4, 5, 6].map((n) =>
+                `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
+            </select>
+          </div>
+          <div class="date-field" style="flex:2">
+            <label>Nome (opcional)</label>
+            <input class="input" id="t-label" placeholder="Ex.: Réveillon 2027">
+          </div>
+          <button class="btn" id="t-add" data-prop="${prop.id}">Adicionar</button>
+        </div>
+
+        <div id="t-form-rolling" class="date-picker" hidden>
+          <div class="date-field" style="flex:2">
+            <label>Nome</label>
+            <input class="input" id="t-rlabel" placeholder="Ex.: Janela de 90 dias">
+          </div>
+          <div class="date-field" style="max-width:130px">
+            <label>Daqui a (dias)</label>
+            <input class="input" type="number" id="t-horizon" min="1" placeholder="90">
+          </div>
+          <div class="date-field" style="max-width:120px">
+            <label>Noites</label>
+            <input class="input" type="number" id="t-los" value="2" min="1">
+          </div>
+          <div class="date-field" style="max-width:130px">
+            <label>Hóspedes</label>
+            <select class="select" id="t-radults">
+              ${[1, 2, 3, 4, 5, 6].map((n) =>
+                `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
+            </select>
+          </div>
+          <button class="btn" id="t-radd" data-prop="${prop.id}">Adicionar</button>
+        </div>
+
+        <p class="muted small" id="t-hint" style="margin-top:10px">
+          Cada alvo ativo custa 1 requisição por varredura.
+          Com ${budget.daysLeft} dias restantes no mês, cabem até
+          <span class="strong">${budget.maxTargetsPerScan}</span> alvos por varredura.
+        </p>`).join('')}
     </div>`
 
   const renderDiag = (d) => {
@@ -1381,16 +1469,62 @@ async function pageSettings (main) {
     }))
 
   document.getElementById('t-add')?.addEventListener('click', async (ev) => {
-    const label = document.getElementById('t-label').value.trim()
-    const horizon = Number(document.getElementById('t-horizon').value)
-    const los = Number(document.getElementById('t-los').value) || 2
-    if (!label || !horizon) return toast('Informe nome e número de dias', 'error')
-    busy(ev.currentTarget, true, '…')
+    const checkIn = document.getElementById('t-checkin').value
+    const checkOut = document.getElementById('t-checkout').value
+    if (!checkIn || !checkOut) return toast('Escolha check-in e check-out', 'error')
+    if (checkOut <= checkIn) return toast('O check-out precisa ser depois do check-in', 'error')
+
+    busy(ev.currentTarget, true, '...')
     try {
-      await api.createTarget({ property_id: Number(ev.currentTarget.dataset.prop), label, horizon_days: horizon, los })
-      toast('Alvo adicionado', 'ok')
+      await api.createTarget({
+        property_id: Number(ev.currentTarget.dataset.prop),
+        mode: 'fixed',
+        check_in: checkIn,
+        check_out: checkOut,
+        adults: Number(document.getElementById('t-adults').value),
+        label: document.getElementById('t-label').value.trim()
+      })
+      toast('Período adicionado', 'ok')
       pageSettings(main)
     } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
+  })
+
+  document.getElementById('t-radd')?.addEventListener('click', async (ev) => {
+    const horizon = Number(document.getElementById('t-horizon').value)
+    if (!horizon || horizon < 1) return toast('Informe o número de dias', 'error')
+
+    busy(ev.currentTarget, true, '...')
+    try {
+      await api.createTarget({
+        property_id: Number(ev.currentTarget.dataset.prop),
+        mode: 'rolling',
+        horizon_days: horizon,
+        los: Number(document.getElementById('t-los').value) || 2,
+        adults: Number(document.getElementById('t-radults').value),
+        label: document.getElementById('t-rlabel').value.trim()
+      })
+      toast('Janela móvel adicionada', 'ok')
+      pageSettings(main)
+    } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
+  })
+
+  // Alterna entre os dois formulários de cadastro.
+  document.getElementById('t-mode')?.querySelectorAll('button').forEach((b) =>
+    b.addEventListener('click', () => {
+      const fixed = b.dataset.mode === 'fixed'
+      document.getElementById('t-mode').querySelectorAll('button')
+        .forEach((x) => x.classList.toggle('active', x === b))
+      document.getElementById('t-form-fixed').hidden = !fixed
+      document.getElementById('t-form-rolling').hidden = fixed
+    }))
+
+  // Check-out sempre depois do check-in: move o piso ao escolher a entrada.
+  document.getElementById('t-checkin')?.addEventListener('change', (ev) => {
+    const out = document.getElementById('t-checkout')
+    const min = new Date(`${ev.target.value}T12:00:00Z`)
+    min.setUTCDate(min.getUTCDate() + 1)
+    out.min = min.toISOString().slice(0, 10)
+    if (!out.value || out.value <= ev.target.value) out.value = out.min
   })
 }
 

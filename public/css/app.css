@@ -677,6 +677,35 @@ tbody tr:hover { background: var(--surface-2); }
   .rank-bar, .rank-row > .badge { display: none; }
 }
 
+/* ─── Seletor de período ────────────────────────────────────────────────── */
+
+.date-picker {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+  padding: 14px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-md);
+}
+.date-field { flex: 1; min-width: 150px; }
+.date-field label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 500;
+  color: var(--ink-3); margin-bottom: 6px;
+}
+.date-field label svg { width: 12px; height: 12px; }
+.date-picker .btn { height: 37px; }
+
+/* O ícone nativo do date input é preto fixo e some no tema escuro. */
+input[type="date"] { min-height: 37px; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer; opacity: .55;
+  filter: var(--date-icon-filter, none);
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --date-icon-filter: invert(1); }
+}
+
 .divider { height: 1px; background: var(--hairline-soft); margin: 18px 0; }
 .row { display: flex; align-items: center; gap: 12px; }
 .row.between { justify-content: space-between; }

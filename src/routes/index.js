@@ -218,17 +218,57 @@ router.get('/properties', wrap(async (req, res) => {
   res.json(rows)
 }))
 
+const DATE_RX = /^\d{4}-\d{2}-\d{2}$/
+
 router.post('/targets', wrap(async (req, res) => {
-  const { property_id, label, horizon_days, los = 2, adults = 2 } = req.body || {}
-  if (!property_id || !label || !Number.isFinite(Number(horizon_days))) {
-    return res.status(400).json({ error: 'property_id, label e horizon_days sao obrigatorios' })
+  const { property_id, label, mode = 'rolling', horizon_days, los = 2, adults = 2,
+    check_in: checkIn, check_out: checkOut } = req.body || {}
+
+  if (!property_id) return res.status(400).json({ error: 'Informe a propriedade' })
+  if (!['rolling', 'fixed'].includes(mode)) {
+    return res.status(400).json({ error: 'Modo invalido' })
+  }
+
+  if (mode === 'fixed') {
+    if (!DATE_RX.test(String(checkIn)) || !DATE_RX.test(String(checkOut))) {
+      return res.status(400).json({ error: 'Informe check-in e check-out no formato AAAA-MM-DD' })
+    }
+    if (checkOut <= checkIn) {
+      return res.status(400).json({ error: 'O check-out precisa ser depois do check-in' })
+    }
+    // Uma data que ja passou nao tem oferta: seria requisicao jogada fora.
+    const today = new Date().toISOString().slice(0, 10)
+    if (checkIn <= today) {
+      return res.status(400).json({ error: 'O check-in precisa ser uma data futura' })
+    }
+
+    const nights = Math.round(
+      (new Date(`${checkOut}T12:00:00Z`) - new Date(`${checkIn}T12:00:00Z`)) / 86400000
+    )
+    const auto = `${checkIn.split('-').reverse().slice(0, 2).join('/')} · ${nights} ${nights === 1 ? 'noite' : 'noites'}`
+
+    const { rows } = await query(
+      `INSERT INTO scan_targets (property_id, label, mode, check_in, check_out, los, adults)
+       VALUES ($1,$2,'fixed',$3,$4,$5,$6)
+       ON CONFLICT (property_id, check_in, check_out, adults) WHERE mode = 'fixed'
+         DO UPDATE SET label = EXCLUDED.label, active = TRUE
+       RETURNING *`,
+      [property_id, label?.trim() || auto, checkIn, checkOut, nights, adults]
+    )
+    await audit(req.user.email, 'target.create', rows[0])
+    return res.json(rows[0])
+  }
+
+  if (!Number.isFinite(Number(horizon_days)) || Number(horizon_days) < 1) {
+    return res.status(400).json({ error: 'Informe o numero de dias da janela movel' })
   }
   const { rows } = await query(
-    `INSERT INTO scan_targets (property_id, label, horizon_days, los, adults)
-     VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (property_id, horizon_days, los, adults) DO UPDATE SET label = EXCLUDED.label, active = TRUE
+    `INSERT INTO scan_targets (property_id, label, mode, horizon_days, los, adults)
+     VALUES ($1,$2,'rolling',$3,$4,$5)
+     ON CONFLICT (property_id, horizon_days, los, adults)
+       DO UPDATE SET label = EXCLUDED.label, active = TRUE
      RETURNING *`,
-    [property_id, label, horizon_days, los, adults]
+    [property_id, label?.trim() || `Janela de ${horizon_days} dias`, horizon_days, los, adults]
   )
   await audit(req.user.email, 'target.create', rows[0])
   res.json(rows[0])
