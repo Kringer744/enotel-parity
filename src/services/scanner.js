@@ -52,7 +52,7 @@ async function processTarget (scanId, target, channels, settings, opts) {
   const { token, spent: tokenSpent } = await ensureToken(target, dates, opts)
   spent += tokenSpent
 
-  const { offers } = await serp.fetchOffers(token, {
+  const { offers } = await serp.fetchOffers(token, target.serp_query, {
     checkIn: dates.checkIn,
     checkOut: dates.checkOut,
     adults: target.adults,
