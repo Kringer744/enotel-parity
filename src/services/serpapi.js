@@ -133,10 +133,10 @@ function extractNightly (entry, los) {
  * Booking, Expedia, Hoteis.com, Trip.com etc. de uma vez -- e por isso que o
  * orcamento de 250 chega para uma varredura diaria.
  */
-export async function fetchOffers (propertyToken, { checkIn, checkOut, adults = 2, los = 1 }, opts = {}) {
+export async function fetchOffers (propertyToken, q, { checkIn, checkOut, adults = 2, los = 1 }, opts = {}) {
   const body = await call({
     ...BASE_PARAMS,
-    property_token: propertyToken,
+    q,\n    property_token: propertyToken,
     check_in_date: checkIn,
     check_out_date: checkOut,
     adults
