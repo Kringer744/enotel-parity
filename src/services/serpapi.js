@@ -200,7 +200,14 @@ export async function fetchOffers (propertyToken, q, { checkIn, checkOut, adults
  * casamento com os canais monitorados esta funcionando.
  */
 export async function probe (target, opts = { allowReserve: true }) {
-  const dates = datesForHorizon(target.horizon_days, target.los)
+  // Alvo de data fixa traz as proprias datas; janela movel calcula a partir de hoje.
+  const dates = target.mode === 'fixed'
+    ? { checkIn: String(target.check_in).slice(0, 10),
+        checkOut: String(target.check_out).slice(0, 10) }
+    : datesForHorizon(target.horizon_days, target.los)
+  const nights = Math.max(1, Math.round(
+    (new Date(`${dates.checkOut}T12:00:00Z`) - new Date(`${dates.checkIn}T12:00:00Z`)) / 86400000
+  ))
   let token = target.serp_property_token
   let requestsUsed = 0
 
@@ -218,7 +225,7 @@ export async function probe (target, opts = { allowReserve: true }) {
     checkIn: dates.checkIn,
     checkOut: dates.checkOut,
     adults: target.adults,
-    los: target.los
+    los: nights
   }, opts)
   requestsUsed += 1
 

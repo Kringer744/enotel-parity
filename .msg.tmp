@@ -1,0 +1,23 @@
+feat: filtros de data no cabecalho do Painel e check-in no proprio dia
+
+- Os seletores de check-in e check-out foram para o cabecalho do Painel, ao
+  lado do 7/30/90 dias e do botao de varredura, que e onde o olho ja esta.
+  Dois botoes com custos diferentes: "Monitorar" so cadastra o periodo e
+  espera a varredura agendada; "Puxar" cadastra e varre na hora.
+
+- Chips abaixo do cabecalho listam os periodos especificos em monitoramento,
+  com remocao em um clique. Os gerados automaticamente aparecem destacados.
+
+- Check-in no proprio dia passa a ser aceito: reserva de ultima hora e caso
+  real e o Google Hotels devolve tarifa para hoje. Isso exigiu mudar a
+  expiracao de check_in <= CURRENT_DATE para <, senao o alvo criado para hoje
+  expirava no mesmo instante em que era gravado.
+
+Corrige de passagem dois bugs no diagnostico:
+- routes/index.js chamava serp.probe() sem importar o modulo, entao o teste
+  de busca real sempre falhava com "serp is not defined", silenciado pelo
+  try/catch em volta.
+- probe() calculava as datas sempre pela janela movel, ignorando alvos de
+  data fixa; agora usa as datas do proprio alvo e deriva as noites delas.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>

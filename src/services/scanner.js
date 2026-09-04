@@ -56,7 +56,7 @@ function resolveDates (target) {
 async function expirePastTargets () {
   const { rows } = await query(
     `UPDATE scan_targets SET active = FALSE
-     WHERE active AND mode = 'fixed' AND check_in <= CURRENT_DATE
+     WHERE active AND mode = 'fixed' AND check_in < CURRENT_DATE
      RETURNING label`
   )
   if (rows.length > 0) {

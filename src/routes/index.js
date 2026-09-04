@@ -5,6 +5,7 @@ import * as reports from '../services/reports.js'
 import * as scanner from '../services/scanner.js'
 import * as uazapi from '../services/uazapi.js'
 import * as notifier from '../services/notifier.js'
+import * as serp from '../services/serpapi.js'
 import { getSettings, updateSetting } from '../services/settings.js'
 import { matchChannel } from '../services/parity.js'
 import { computeAutoPeriods, ensureAutoTargets } from '../jobs/autoTargets.js'
@@ -150,10 +151,12 @@ router.get('/serpapi/diagnose', wrap(async (req, res) => {
   out.account = account
 
   const { rows: targets } = await query(
-    `SELECT t.id, t.label, t.horizon_days, t.los, t.adults, t.active,
+    `SELECT t.id, t.label, t.mode, t.check_in, t.check_out, t.horizon_days,
+            t.los, t.adults, t.active,
             p.name AS property_name, p.serp_query, p.serp_property_token
      FROM scan_targets t JOIN properties p ON p.id = t.property_id
-     WHERE t.active AND p.active ORDER BY t.horizon_days`
+     WHERE t.active AND p.active
+     ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
   )
   out.steps.push({
     step: 'Alvos ativos',
@@ -256,8 +259,8 @@ router.post('/targets', wrap(async (req, res) => {
     }
     // Uma data que ja passou nao tem oferta: seria requisicao jogada fora.
     const today = new Date().toISOString().slice(0, 10)
-    if (checkIn <= today) {
-      return res.status(400).json({ error: 'O check-in precisa ser uma data futura' })
+    if (checkIn < today) {
+      return res.status(400).json({ error: 'O check-in nao pode ser uma data passada' })
     }
 
     const nights = Math.round(

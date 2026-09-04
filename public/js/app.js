@@ -8,10 +8,10 @@ import { lineChart, barChart, heatmap, money2 } from './charts.js'
 const root = document.getElementById('root')
 const state = { user: null, page: 'dashboard', days: 30, openCount: 0, trendTarget: null }
 
-// Piso do seletor de check-in: uma estadia que já começou não tem oferta.
-const TOMORROW = (() => {
+// Piso dos seletores de data. Check-in no proprio dia e valido: e reserva
+// de ultima hora, e o Google Hotels devolve tarifa para hoje.
+const TODAY = (() => {
   const d = new Date()
-  d.setDate(d.getDate() + 1)
   return d.toISOString().slice(0, 10)
 })()
 
@@ -164,6 +164,106 @@ function wirePeriod (rerender) {
 
 /* ═══ Painel ══════════════════════════════════════════════════════════════ */
 
+/**
+ * Controles de data do cabecalho do Painel.
+ * "Monitorar" so cadastra o periodo e espera a varredura agendada; "Puxar"
+ * cadastra e varre na hora -- e esse o caminho que gasta requisicao.
+ */
+function wireHeadDates (main) {
+  const ci = document.getElementById('h-checkin')
+  const co = document.getElementById('h-checkout')
+
+  // O check-out acompanha o check-in e nunca pode ser anterior a ele.
+  ci.addEventListener('change', () => {
+    const min = new Date(`${ci.value}T12:00:00Z`)
+    min.setUTCDate(min.getUTCDate() + 1)
+    co.min = min.toISOString().slice(0, 10)
+    if (!co.value || co.value <= ci.value) co.value = co.min
+  })
+
+  const create = async () => {
+    if (!ci.value || !co.value) throw new Error('Escolha check-in e check-out')
+    if (co.value <= ci.value) throw new Error('O check-out precisa ser depois do check-in')
+    const props = await api.properties()
+    const prop = props.find((p) => p.active) || props[0]
+    if (!prop) throw new Error('Nenhuma propriedade cadastrada')
+    return api.createTarget({
+      property_id: prop.id,
+      mode: 'fixed',
+      check_in: ci.value,
+      check_out: co.value,
+      adults: 2
+    })
+  }
+
+  document.getElementById('h-add').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, '...')
+    try {
+      await create()
+      toast('Período monitorado. Entra na próxima varredura.', 'ok')
+      await renderPeriodChips()
+    } catch (err) { toast(err.message, 'error') }
+    busy(ev.currentTarget, false)
+  })
+
+  document.getElementById('h-pull').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Puxando...')
+    try {
+      await create()
+      await api.runScan()
+      document.getElementById('ranking').innerHTML =
+        loading('Consultando o Google Hotels para o período escolhido...', 260)
+      const scan = await waitForScan()
+      if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
+        toast(`${scan.rates_captured} tarifas coletadas`, 'ok')
+      } else if (scan) {
+        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+      }
+      return pageDashboard(main)
+    } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
+  })
+}
+
+/** Períodos de data fixa em monitoramento, como chips removíveis. */
+async function renderPeriodChips () {
+  const host = document.getElementById('period-chips')
+  if (!host) return
+
+  const props = await api.properties().catch(() => [])
+  const fixed = props.flatMap((p) => p.targets || [])
+    .filter((t) => t.mode === 'fixed' && t.active)
+    .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)))
+
+  if (fixed.length === 0) {
+    host.innerHTML =
+      '<span class="muted small">Nenhum período específico monitorado. ' +
+      'Escolha as datas acima para adicionar.</span>'
+    return
+  }
+
+  host.innerHTML = '<span class="muted small">Períodos monitorados:</span>' +
+    fixed.map((t) => `
+      <span class="chip${t.auto_key ? ' auto' : ''}">
+        <i data-lucide="${t.auto_key ? 'sparkles' : 'calendar-check'}" class="icon-sm"></i>
+        ${fmtDate(t.check_in)} a ${fmtDate(t.check_out)}
+        <button data-chip="${t.id}" title="Parar de monitorar">
+          <i data-lucide="x" class="icon-sm"></i>
+        </button>
+      </span>`).join('')
+
+  host.querySelectorAll('[data-chip]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api.deleteTarget(b.dataset.chip)
+        toast('Período removido do monitoramento', 'ok')
+        await renderPeriodChips()
+      } catch (err) { toast(err.message, 'error') }
+    }))
+
+  refreshIcons(host)
+}
+
+
 async function pageDashboard (main) {
   main.innerHTML = `
     <div class="page-head">
@@ -171,11 +271,20 @@ async function pageDashboard (main) {
         <h1>Painel</h1>
         <p class="page-sub" id="head-sub">Carregando…</p>
       </div>
-      <div class="row">
+      <div class="row wrap" style="gap:10px">
         ${periodPicker()}
-        <button class="btn" id="run-scan">Varredura agora</button>
+        <div class="head-dates">
+          <i data-lucide="calendar" class="icon-sm"></i>
+          <input type="date" id="h-checkin" min="${TODAY}" title="Check-in">
+          <span class="sep">até</span>
+          <input type="date" id="h-checkout" min="${TODAY}" title="Check-out">
+          <button class="btn ghost small" id="h-add">Monitorar</button>
+          <button class="btn small" id="h-pull">Puxar</button>
+        </div>
+        <button class="btn secondary" id="run-scan">Varredura agora</button>
       </div>
     </div>
+    <div id="period-chips" class="period-chips"></div>
     <div class="grid kpi" id="kpis">${[1, 2, 3, 4].map(() => skeleton(110)).join('')}</div>
     <div class="grid two" style="margin-top:16px">
       <div class="card">
@@ -212,6 +321,8 @@ async function pageDashboard (main) {
     </div>`
 
   wirePeriod(() => pageDashboard(main))
+  wireHeadDates(main)
+  renderPeriodChips()
   document.getElementById('see-all').addEventListener('click', () => go('findings'))
 
   document.getElementById('run-scan').addEventListener('click', async (ev) => {
@@ -575,11 +686,11 @@ async function pageRates (main) {
       <div class="date-picker">
         <div class="date-field">
           <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
-          <input class="input" type="date" id="r-checkin" min="${TOMORROW}">
+          <input class="input" type="date" id="r-checkin" min="${TODAY}">
         </div>
         <div class="date-field">
           <label><i data-lucide="calendar-check" class="icon-sm"></i>Check-out</label>
-          <input class="input" type="date" id="r-checkout" min="${TOMORROW}">
+          <input class="input" type="date" id="r-checkout" min="${TODAY}">
         </div>
         <div class="date-field" style="max-width:130px">
           <label><i data-lucide="users" class="icon-sm"></i>Hóspedes</label>
@@ -1458,11 +1569,11 @@ async function pageSettings (main) {
         <div id="t-form-fixed" class="date-picker">
           <div class="date-field">
             <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
-            <input class="input" type="date" id="t-checkin" min="${TOMORROW}">
+            <input class="input" type="date" id="t-checkin" min="${TODAY}">
           </div>
           <div class="date-field">
             <label><i data-lucide="calendar" class="icon-sm"></i>Check-out</label>
-            <input class="input" type="date" id="t-checkout" min="${TOMORROW}">
+            <input class="input" type="date" id="t-checkout" min="${TODAY}">
           </div>
           <div class="date-field" style="max-width:140px">
             <label><i data-lucide="users" class="icon-sm"></i>Hóspedes</label>
