@@ -6,3 +6,7 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# arquivos temporarios de mensagem de commit
+.msg.tmp
+.fn.tmp
