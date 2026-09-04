@@ -484,6 +484,75 @@ async function waitForScan ({ timeoutMs = 120000, intervalMs = 3000 } = {}) {
 
 /* ═══ Tarifas atuais ══════════════════════════════════════════════════════ */
 
+/**
+ * Liga o seletor de período fixo do topo de "Tarifas atuais".
+ * "Só monitorar" cadastra e espera a próxima varredura; "Puxar agora" cadastra
+ * e dispara a varredura na hora, que é o caminho que gasta requisição.
+ */
+function wireFixedPeriod (main) {
+  const checkIn = document.getElementById('r-checkin')
+  const checkOut = document.getElementById('r-checkout')
+  const hint = document.getElementById('r-hint')
+
+  api.budget().then((b) => {
+    hint.textContent =
+      `Puxar agora consome ${b.perScan + 1} requisições (todos os alvos ativos mais este). ` +
+      `Restam ${b.remaining} das ${b.limit} do mês.`
+  }).catch(() => { hint.textContent = '' })
+
+  // O check-out nunca pode ser anterior ou igual ao check-in.
+  checkIn.addEventListener('change', () => {
+    const min = new Date(`${checkIn.value}T12:00:00Z`)
+    min.setUTCDate(min.getUTCDate() + 1)
+    checkOut.min = min.toISOString().slice(0, 10)
+    if (!checkOut.value || checkOut.value <= checkIn.value) checkOut.value = checkOut.min
+  })
+
+  const create = async () => {
+    if (!checkIn.value || !checkOut.value) throw new Error('Escolha check-in e check-out')
+    if (checkOut.value <= checkIn.value) throw new Error('O check-out precisa ser depois do check-in')
+    const props = await api.properties()
+    const prop = props.find((p) => p.active) || props[0]
+    if (!prop) throw new Error('Nenhuma propriedade cadastrada')
+    return api.createTarget({
+      property_id: prop.id,
+      mode: 'fixed',
+      check_in: checkIn.value,
+      check_out: checkOut.value,
+      adults: Number(document.getElementById('r-adults').value)
+    })
+  }
+
+  document.getElementById('r-add').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Salvando...')
+    try {
+      await create()
+      toast('Período adicionado. Entra na próxima varredura.', 'ok')
+    } catch (err) { toast(err.message, 'error') }
+    busy(ev.currentTarget, false)
+  })
+
+  document.getElementById('r-pull').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Puxando...')
+    try {
+      await create()
+      await api.runScan()
+      document.getElementById('rates').innerHTML =
+        loading('Consultando o Google Hotels para o período escolhido...', 320)
+      const scan = await waitForScan()
+      if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
+        toast(`${scan.rates_captured} tarifas coletadas`, 'ok')
+      } else if (scan) {
+        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+      }
+      return pageRates(main)
+    } catch (err) {
+      toast(err.message, 'error')
+      busy(ev.currentTarget, false)
+    }
+  })
+}
+
 async function pageRates (main) {
   main.innerHTML = `
     <div class="page-head">
@@ -492,7 +561,42 @@ async function pageRates (main) {
         <p class="page-sub">Fotografia da última varredura, por data de check-in</p>
       </div>
     </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Puxar um período específico</div>
+          <div class="card-note">
+            Escolha check-in e check-out. O período passa a ser monitorado
+            diariamente até a data chegar, e depois sai sozinho.
+          </div>
+        </div>
+      </div>
+      <div class="date-picker">
+        <div class="date-field">
+          <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
+          <input class="input" type="date" id="r-checkin" min="${TOMORROW}">
+        </div>
+        <div class="date-field">
+          <label><i data-lucide="calendar-check" class="icon-sm"></i>Check-out</label>
+          <input class="input" type="date" id="r-checkout" min="${TOMORROW}">
+        </div>
+        <div class="date-field" style="max-width:130px">
+          <label><i data-lucide="users" class="icon-sm"></i>Hóspedes</label>
+          <select class="select" id="r-adults">
+            ${[1, 2, 3, 4, 5, 6].map((n) =>
+              `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn secondary" id="r-add">Só monitorar</button>
+        <button class="btn" id="r-pull">Puxar agora</button>
+      </div>
+      <p class="muted small" id="r-hint" style="margin-top:10px"></p>
+    </div>
+
     <div id="rates">${loading('Carregando tarifas da última varredura...', 320)}</div>`
+
+  wireFixedPeriod(main)
 
   const groups = await api.currentRates()
   const host = document.getElementById('rates')
@@ -562,7 +666,7 @@ function findingsTable (findings) {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Detectado</th><th>Canal</th><th>Check-in</th>
+          <th>Detectado</th><th>Canal</th><th>Check-in</th><th>Check-out</th>
           <th class="num">Direto</th><th class="num">Canal</th><th class="num">Diferença</th>
           <th>Severidade</th><th>Status</th><th></th>
         </tr></thead>
@@ -577,7 +681,8 @@ function findingsTable (findings) {
                 </span>
                 <div class="muted small" style="margin-top:2px">${KIND[f.kind] || f.kind}</div>
               </td>
-              <td class="mono">${fmtDate(f.check_in)}<div class="muted small">${f.los || 2} noites</div></td>
+              <td class="mono">${fmtDate(f.check_in)}</td>
+              <td class="mono">${fmtDate(f.check_out)}<div class="muted small">${f.los || 2} noites</div></td>
               <td class="num mono">${money2(f.base_price)}</td>
               <td class="num mono strong">${money2(f.channel_price)}</td>
               <td class="num mono" style="color:${f.delta_pct < 0 ? 'var(--critical)' : 'var(--ink-2)'}">
