@@ -176,6 +176,22 @@ function fmtDay (iso) {
     .replace('.', '')
 }
 
+/* Graficos vivos, para o repaint no toggle de tema/tenant (hook onThemeChange). */
+const activeCharts = new Set()
+
+/**
+ * Redesenha todos os graficos vivos na largura atual. As cores ja reagem ao
+ * tema/tenant via var(--*) (zero-redraw), entao isto e uma REDE DE SEGURANCA
+ * para o hook onThemeChange do theme.js (dono: Vitrine) e para qualquer futura
+ * leitura via getComputedStyle. Poda hosts que sairam do DOM (navegacao SPA).
+ */
+export function repaintCharts () {
+  for (const host of [...activeCharts]) {
+    if (!host.isConnected) { activeCharts.delete(host); continue }
+    if (typeof host._redraw === 'function') host._redraw()
+  }
+}
+
 /** Redesenha quando o conteiner muda de largura -- o SVG e em px, nao escalado. */
 function responsive (host, draw) {
   let last = 0
@@ -183,6 +199,9 @@ function responsive (host, draw) {
     const w = host.clientWidth
     if (w > 0 && Math.abs(w - last) > 2) { last = w; draw(w) }
   }
+  // Repaint forcado (toggle de tema/tenant): redesenha na largura atual.
+  host._redraw = () => { const w = host.clientWidth; if (w > 0) { last = w; draw(w) } }
+  activeCharts.add(host)
   run()
   if (host._ro) host._ro.disconnect()
   host._ro = new ResizeObserver(run)

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paridade — galeria de graficos (demo local)</title>
+  <!-- Anti-flash: seta o tema salvo antes do primeiro paint (igual ao que o Vitrine cola no index.html). -->
+  <script>try{var m=localStorage.getItem('paridade.theme');if(m==='light'||m==='dark')document.documentElement.setAttribute('data-theme',m)}catch(e){}</script>
+  <link rel="stylesheet" href="../css/app.css">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* Layout so do demo — tudo em tokens do Lote 1, para provar claro/escuro/white-label. */
+    body { background: var(--plane); color: var(--ink); }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 16px 72px; }
+    header.demo { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+    .demo h1 { font-size: 20px; margin: 0; letter-spacing: var(--track-tight); }
+    .demo .sub { color: var(--ink-3); font-size: 13px; margin: 3px 0 0; }
+    .toolbar { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .field { display: flex; flex-direction: column; gap: 5px; }
+    .field .cap { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+    .segmented { display: inline-flex; border: 1px solid var(--hairline); border-radius: var(--r-md); overflow: hidden; background: var(--surface); }
+    .segmented button { border: 0; background: transparent; color: var(--ink-2); padding: 7px 11px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 12.5px; }
+    .segmented button + button { border-left: 1px solid var(--hairline); }
+    .segmented button.active { background: var(--accent); color: #fff; }
+    .segmented button:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--accent-wash); }
+    .segmented button svg { width: 15px; height: 15px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 20px; }
+    .tile { background: var(--surface); border: 1px solid var(--hairline-soft); border-radius: var(--r-lg); padding: 16px; box-shadow: var(--shadow-sm); }
+    .tile .label { font-size: 12.5px; color: var(--ink-3); }
+    .tile .value { font-size: 28px; font-weight: 600; line-height: 1.1; margin: 5px 0 10px; }
+    .tile .value.bad { color: var(--critical); }
+    .tile .spark { height: 34px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+    .grid .full { grid-column: 1 / -1; }
+    .card { background: var(--surface); border: 1px solid var(--hairline-soft); border-radius: var(--r-lg); padding: 18px 18px 20px; box-shadow: var(--shadow-sm); }
+    .card h2 { font-size: 14px; margin: 0; }
+    .card .note { color: var(--ink-3); font-size: 12.5px; margin: 3px 0 14px; }
+    .card .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .btn-mini { border: 1px solid var(--hairline); background: var(--surface); color: var(--ink-2); border-radius: var(--r-sm);
+      padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .btn-mini:hover { background: var(--surface-2); }
+    @media (max-width: 820px) { .stats { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 460px) { .stats { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="demo">
+      <div>
+        <h1>Paridade — galeria de graficos</h1>
+        <p class="sub">Demo local · SVG nativo sem lib · dados mock realistas da Enotel · teclado, aria e tabela-gemea em cada grafico</p>
+      </div>
+      <div class="toolbar">
+        <div class="field">
+          <span class="cap">Tenant (white-label)</span>
+          <div class="segmented" id="tenant" role="group" aria-label="Tenant"></div>
+        </div>
+        <div class="field">
+          <span class="cap">Tema</span>
+          <div class="segmented" id="theme" role="group" aria-label="Tema"></div>
+        </div>
+      </div>
+    </header>
+
+    <div class="stats" id="tiles"></div>
+
+    <div class="grid">
+      <div class="card full">
+        <div class="head">
+          <div>
+            <h2>Tendencia de tarifa por canal</h2>
+            <p class="note">Diaria media por data. Passe o mouse (ou use as setas com o grafico focado) para o crosshair. Lacunas = dias sem coleta.</p>
+          </div>
+          <button class="btn-mini" id="toggle-trend-table" aria-expanded="false" aria-controls="trend">Ver tabela</button>
+        </div>
+        <div id="trend"></div>
+      </div>
+
+      <div class="card">
+        <h2>Conformidade por canal</h2>
+        <p class="note">Percentual de datas em paridade. Cada barra e a cor da marca do canal.</p>
+        <div id="compliance"></div>
+      </div>
+
+      <div class="card">
+        <h2>Ranking de desvio</h2>
+        <p class="note">Pior desvio por canal em torno da tarifa oficial. Vermelho = abaixo (undercut), azul = acima.</p>
+        <div id="ranking"></div>
+      </div>
+
+      <div class="card full">
+        <h2>Mapa de violacoes</h2>
+        <p class="note">Violacoes por canal e por dia. Rampa azul sequencial (--seq-*); no escuro cada celula ganha um anel para nao sumir na superficie.</p>
+        <div id="heat"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { lineChart, barChart, heatmap, sparkline, divergingBars, toggleTable, repaintCharts } from '../js/charts.js'
+    import { initTheme, setTheme, getTheme, onThemeChange } from '../js/theme.js'
+    import { refreshIcons } from '../js/ui.js'
+
+    /* ── Dados mock realistas (numeros reais da Enotel) ───────────────────── */
+    const start = new Date('2026-08-29T12:00:00Z')
+    const dates = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(start); d.setUTCDate(start.getUTCDate() + i)
+      return d.toISOString().slice(0, 10)
+    })
+
+    const direct  = [1180, 1195, 1210, 1200, 1225, 1240, 1215, 1190, 1205, 1230, 1250, 1220, 1235, 1210]
+    const booking = direct.map((v) => Math.round(v * 1.25))
+    const expedia = [1170, 1188, 1205, 1160, 1180, 1235, 1210, 1185, 1150, 1225, 1240, 1215, 1230, 1205]
+    const trip    = [745, 760, null, 735, 780, 790, 755, null, 748, 765, 800, 770, 758, 740]
+
+    const trendSeries = [
+      { name: 'Site oficial', slot: 1, values: direct },
+      { name: 'Booking',      slot: 2, values: booking },
+      { name: 'Expedia',      slot: 3, values: expedia },
+      { name: 'Trip.com',     slot: 8, values: trip }
+    ]
+
+    const compliance = [
+      { name: 'Booking',       slot: 2, value: 100, detail: [{ label: 'Datas em paridade', value: '14 de 14' }] },
+      { name: 'Expedia',       slot: 3, value: 86,  detail: [{ label: 'Datas em paridade', value: '12 de 14' }] },
+      { name: 'Hoteis.com',    slot: 4, value: 79,  detail: [{ label: 'Datas em paridade', value: '11 de 14' }] },
+      { name: 'MaxMilhas',     slot: 5, value: 64,  detail: [{ label: 'Datas em paridade', value: '9 de 14' }] },
+      { name: 'Azul Viagens',  slot: 7, value: 57,  detail: [{ label: 'Datas em paridade', value: '8 de 14' }] },
+      { name: 'Trip.com',      slot: 8, value: 10,  detail: [{ label: 'Datas em paridade', value: '1 de 14' }] }
+    ]
+
+    const ranking = [
+      { name: 'Trip.com',     value: -37 },
+      { name: 'MaxMilhas',    value: -12 },
+      { name: 'Azul Viagens', value: -8 },
+      { name: 'Expedia',      value: -3 },
+      { name: 'Hoteis.com',   value: 2 },
+      { name: 'Booking',      value: 25 }
+    ]
+
+    const heatRow = (name, slot, pattern) => {
+      const cells = {}
+      pattern.forEach((n, i) => { if (n > 0) cells[dates[i]] = n })
+      return { name, slot, cells }
+    }
+    const heatRows = [
+      heatRow('Trip.com',     8, [1, 2, 1, 0, 3, 2, 1, 0, 2, 1, 3, 2, 1, 1]),
+      heatRow('MaxMilhas',    5, [0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1]),
+      heatRow('Azul Viagens', 7, [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0]),
+      heatRow('Expedia',      3, [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0])
+    ]
+
+    const tiles = [
+      { label: 'Violacoes abertas', value: '69', spark: [41, 45, 44, 50, 53, 58, 55, 60, 62, 59, 65, 69], slot: 1 },
+      { label: 'Criticas', value: '23', spark: [12, 14, 15, 13, 16, 18, 17, 20, 19, 21, 22, 23], slot: 8, bad: true },
+      { label: 'Conformidade', value: '70%', spark: [82, 80, 78, 76, 74, 72, 73, 71, 70, 72, 71, 70], slot: 3 },
+      { label: 'Pior desvio (Trip.com)', value: '-37%', spark: [-31, -33, -30, -35, -37, -34, -36, -33, -37, -35, -38, -37], slot: 8, bad: true }
+    ]
+
+    const pctFmt = (v) => `${v > 0 ? '+' : ''}${v}%`
+
+    /* ── Render ───────────────────────────────────────────────────────────── */
+    function renderTiles () {
+      const host = document.getElementById('tiles')
+      host.replaceChildren()
+      for (const t of tiles) {
+        const tile = document.createElement('div')
+        tile.className = 'tile'
+        const label = document.createElement('div'); label.className = 'label'; label.textContent = t.label
+        const value = document.createElement('div'); value.className = 'value' + (t.bad ? ' bad' : ''); value.textContent = t.value
+        const spark = document.createElement('div'); spark.className = 'spark'
+        tile.append(label, value, spark)
+        host.appendChild(tile)
+        sparkline(spark, { values: t.spark, slot: t.slot, height: 34 })
+      }
+    }
+
+    function renderCharts () {
+      lineChart(document.getElementById('trend'), {
+        dates, series: trendSeries, valueFmt: (v) => `R$ ${v}`,
+        ariaLabel: 'Tendencia de tarifa por canal ao longo de 14 datas'
+      })
+      barChart(document.getElementById('compliance'), {
+        items: compliance, max: 100, valueFmt: (v) => `${v}%`,
+        ariaLabel: 'Conformidade por canal, em percentual'
+      })
+      divergingBars(document.getElementById('ranking'), {
+        items: ranking, origin: 0, valueFmt: pctFmt,
+        ariaLabel: 'Ranking de desvio por canal em torno da tarifa oficial'
+      })
+      heatmap(document.getElementById('heat'), {
+        rows: heatRows, dates,
+        ariaLabel: 'Mapa de violacoes por canal e por dia'
+      })
+    }
+
+    renderTiles()
+    renderCharts()
+    refreshIcons(document.body)
+
+    /* ── "Ver tabela" (tabela-gemea WCAG) ─────────────────────────────────── */
+    const tblBtn = document.getElementById('toggle-trend-table')
+    tblBtn.onclick = () => {
+      const shown = toggleTable(document.getElementById('trend'))
+      tblBtn.setAttribute('aria-expanded', shown ? 'true' : 'false')
+      tblBtn.textContent = shown ? 'Ocultar tabela' : 'Ver tabela'
+    }
+
+    /* ── Toggle de tema (3 estados) — usa o theme.js (dono: Vitrine) ──────── */
+    const THEMES = [
+      { mode: 'light', icon: 'sun', label: 'Claro' },
+      { mode: 'dark', icon: 'moon', label: 'Escuro' },
+      { mode: 'system', icon: 'monitor', label: 'Sistema' }
+    ]
+    const themeHost = document.getElementById('theme')
+    for (const t of THEMES) {
+      const b = document.createElement('button')
+      b.dataset.mode = t.mode
+      b.title = t.label
+      b.setAttribute('aria-label', t.label)
+      const i = document.createElement('i'); i.setAttribute('data-lucide', t.icon)
+      const s = document.createElement('span'); s.textContent = t.label
+      b.append(i, s)
+      b.onclick = () => setTheme(t.mode)
+      themeHost.appendChild(b)
+    }
+    function paintThemeButtons () {
+      const cur = getTheme()
+      themeHost.querySelectorAll('button').forEach((b) => {
+        const on = b.dataset.mode === cur
+        b.classList.toggle('active', on)
+        b.setAttribute('aria-pressed', on ? 'true' : 'false')
+      })
+    }
+
+    /* ── White-label: troca so a marca (--brand-*), as series ficam validadas ── */
+    const TENANTS = [
+      { id: 'enotel', label: 'Enotel' },
+      { id: 'fluxo', label: 'Fluxo' },
+      { id: 'acme', label: 'Acme' }
+    ]
+    const tenantHost = document.getElementById('tenant')
+    for (const t of TENANTS) {
+      const b = document.createElement('button')
+      b.dataset.tenant = t.id
+      b.textContent = t.label
+      b.onclick = () => {
+        document.documentElement.dataset.tenant = t.id
+        paintTenantButtons()
+        repaintCharts() // rede de seguranca; as cores de marca ja reagem via var()
+      }
+      tenantHost.appendChild(b)
+    }
+    function paintTenantButtons () {
+      const cur = document.documentElement.dataset.tenant || 'enotel'
+      tenantHost.querySelectorAll('button').forEach((b) =>
+        b.classList.toggle('active', b.dataset.tenant === cur))
+    }
+
+    /* Hook combinado: ao trocar o tema, atualiza o toggle e repinta (rede de seguranca). */
+    onThemeChange(() => { paintThemeButtons(); repaintCharts() })
+
+    initTheme()
+    document.documentElement.dataset.tenant = 'enotel'
+    paintThemeButtons()
+    paintTenantButtons()
+    refreshIcons(document.body)
+  </script>
+
+  <style>
+    /* White-label de demonstracao — posto DEPOIS do app.css para vencer no empate
+       de especificidade, valendo tambem no modo escuro. Provisionamento real valida
+       AA (branco sobre o accent >= 4.5) ao salvar o tenant (regra do Lote 1). */
+    :root[data-tenant="fluxo"] { --brand-accent: #6d28d9; --brand-accent-strong: #a855f7; }
+    :root[data-tenant="acme"]  { --brand-accent: #b45309; --brand-accent-strong: #f59e0b; }
+  </style>
+</body>
+</html>

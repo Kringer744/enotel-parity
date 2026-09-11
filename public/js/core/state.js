@@ -24,3 +24,8 @@ export const TODAY = (() => {
 export function navigate (page) {
   window.dispatchEvent(new CustomEvent('navigate', { detail: page }))
 }
+
+/** Pede ao roteador que redesenhe a navegacao (ex.: badge de contagem mudou). */
+export function refreshNav () {
+  window.dispatchEvent(new CustomEvent('nav:refresh'))
+}

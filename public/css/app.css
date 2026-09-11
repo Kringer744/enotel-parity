@@ -147,6 +147,22 @@
   --shadow-lg: 0 8px 40px rgba(0,0,0,.5);
 }
 
+/* ─── Acessibilidade global (Lote 1 S3.5/3.6) ──────────────────────────────
+   Foco visível por teclado (anel em accent) e respeito a prefers-reduced-motion.
+   :where() = especificidade zero, não briga com estilos de componente. */
+:where(button, a, input, select, .nav-item, .segmented button, .switch input, .chip button, [role="button"]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3.5px var(--accent-wash), 0 0 0 1.5px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
 * { box-sizing: border-box; }
 
 /* ─── Ícones Lucide ──────────────────────────────────────────────────────────
