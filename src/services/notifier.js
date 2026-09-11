@@ -75,7 +75,7 @@ async function findingsForScan (scanId, minSeverity) {
     `SELECT f.*, c.name AS channel_name, c.slug AS channel_slug, t.los
      FROM findings f
      LEFT JOIN channels c ON c.id = f.channel_id
-     LEFT JOIN scan_targets t ON t.id = f.target_id
+     LEFT JOIN targets t ON t.id = f.target_id
      WHERE f.scan_id = $1
        AND f.kind IN ('undercut', 'overcut', 'missing_direct')
      ORDER BY
@@ -110,7 +110,7 @@ export async function notifyScan (scanId) {
   const { rows: scanRows } = await query('SELECT * FROM scans WHERE id = $1', [scanId])
   const scan = scanRows[0]
   const { rows: propRows } = await query(
-    'SELECT name FROM properties WHERE active ORDER BY id LIMIT 1'
+    'SELECT name FROM subjects WHERE active ORDER BY id LIMIT 1'
   )
   const usage = await getUsage()
 

@@ -1,76 +1,174 @@
--- Enotel BR - Monitoramento de Paridade Tarifaria
--- Schema idempotente: seguro rodar em todo boot.
+-- Plataforma de Paridade Fluxo - Schema multi-tenant, vertical-agnostico.
+-- Idempotente: seguro rodar em todo boot (fresh, Enotel legado, ou ja migrado).
+--
+-- Estrategia de transicao (F1, RFC secao 9):
+--   tenant_id entra como NOT NULL DEFAULT 1 nas tabelas de dados. Em bancos ja
+--   provisionados o Postgres preenche as linhas existentes com 1 automaticamente
+--   (backfill do Enotel -> tenant #1 sem passo manual) e o codigo single-tenant
+--   ainda-nao-migrado continua funcionando. O DEFAULT e removido, junto das PKs
+--   e uniques compostas, na peca de endurecimento ANTES de provisionar o 2o
+--   tenant (so ha 1 tenant enquanto o default existe -> zero vazamento possivel).
 
-CREATE TABLE IF NOT EXISTS users (
-  id            SERIAL PRIMARY KEY,
-  email         TEXT NOT NULL UNIQUE,
-  password_hash TEXT NOT NULL,
-  name          TEXT NOT NULL,
-  role          TEXT NOT NULL DEFAULT 'admin',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+-- ─── Tenants (o cliente) ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tenants (
+  id         SERIAL PRIMARY KEY,
+  slug       TEXT NOT NULL UNIQUE,          -- subdomain-safe, lowercase
+  name       TEXT NOT NULL,
+  branding   JSONB NOT NULL DEFAULT '{}',   -- logo, paleta (white-label)
+  active     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Canais de venda. 'direct' e a ancora de paridade; 'ota' sao os comparados.
+-- O Enotel e o tenant #1. Precisa existir ANTES dos ALTER que adicionam
+-- tenant_id NOT NULL DEFAULT 1 REFERENCES tenants(id) (FK + backfill).
+INSERT INTO tenants (id, slug, name)
+  VALUES (1, 'enotel', 'Enotel')
+  ON CONFLICT (id) DO NOTHING;
+-- Mantem a sequence a frente do id semeado manualmente.
+SELECT setval(pg_get_serial_sequence('tenants', 'id'),
+              GREATEST((SELECT MAX(id) FROM tenants), 1));
+
+-- Config de conector POR tenant: credenciais e orcamento proprios do cliente.
+-- 'metered' distingue conector com cota dura (SerpAPI, passa pela guarda
+-- atomica) de conector sem cota (ANP download, so alimenta o forecast).
+CREATE TABLE IF NOT EXISTS tenant_connectors (
+  tenant_id     INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  connector_key TEXT NOT NULL,              -- 'hotel_serpapi', 'fuel_anp'
+  config        JSONB NOT NULL DEFAULT '{}',-- api key, endpoint (segredo fora do repo)
+  monthly_limit INTEGER,                    -- teto do cliente (NULL = herda do conector)
+  reserve       INTEGER NOT NULL DEFAULT 0,
+  metered       BOOLEAN NOT NULL DEFAULT TRUE,
+  active        BOOLEAN NOT NULL DEFAULT TRUE,
+  PRIMARY KEY (tenant_id, connector_key)
+);
+
+-- ─── Usuarios (tenant_id NULL = superadmin da plataforma) ────────────────────
+CREATE TABLE IF NOT EXISTS users (
+  id            SERIAL PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,          -- UNIQUE global na F1 (login sem contexto de tenant)
+  password_hash TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  role          TEXT NOT NULL DEFAULT 'viewer',
+  tenant_id     INTEGER REFERENCES tenants(id) ON DELETE CASCADE,  -- NULL p/ superadmin
+  active        BOOLEAN NOT NULL DEFAULT TRUE,   -- soft-deactivate (Bastiao #3); login recusa inativo
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Bancos legados: colunas novas. Backfill admin->tenant #1 no migrate.js;
+-- o CHECK de role e adicionado LA, so depois do backfill (senao quebra: role='admin').
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- ─── Convites e reset de senha (token de uso unico) ──────────────────────────
+-- Desenho do Nucleo (AUTH-API-PARIDADE.md secao 6.4); schema do Cortex.
+-- O token CRU nunca e gravado: so o SHA-256. O lookup publico do accept e por
+-- token_hash e resolve o tenant a partir do convite (unica leitura cross-tenant
+-- por desenho -- o token E a credencial).
+CREATE TABLE IF NOT EXISTS invites (
+  id          SERIAL PRIMARY KEY,
+  tenant_id   INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  email       TEXT NOT NULL,
+  name        TEXT,
+  role        TEXT NOT NULL CHECK (role IN ('tenant_admin', 'viewer')),
+  token_hash  TEXT NOT NULL UNIQUE,          -- SHA-256; token cru so viaja no link, uma vez
+  purpose     TEXT NOT NULL DEFAULT 'invite' CHECK (purpose IN ('invite', 'password_reset')),
+  expires_at  TIMESTAMPTZ NOT NULL,          -- +72h (invite) / +1h (reset)
+  accepted_at TIMESTAMPTZ,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_invites_tenant ON invites(tenant_id, email);
+
+-- ─── Canais de venda ─────────────────────────────────────────────────────────
+-- 'direct' e a ancora de paridade; 'competitor'/'ota' sao os comparados.
 CREATE TABLE IF NOT EXISTS channels (
   id         SERIAL PRIMARY KEY,
-  slug       TEXT NOT NULL UNIQUE,
+  slug       TEXT NOT NULL UNIQUE,          -- UNIQUE composta (tenant_id, slug) fica p/ o endurecimento
   name       TEXT NOT NULL,
-  kind       TEXT NOT NULL DEFAULT 'ota' CHECK (kind IN ('direct', 'ota')),
-  -- Padroes (lowercase) usados para casar o campo "source" da SerpAPI com este canal
+  kind       TEXT NOT NULL DEFAULT 'ota' CHECK (kind IN ('direct', 'ota', 'competitor')),
   patterns   TEXT[] NOT NULL DEFAULT '{}',
   color      TEXT NOT NULL DEFAULT '#2a78d6',
   sort_order INTEGER NOT NULL DEFAULT 100,
-  active     BOOLEAN NOT NULL DEFAULT TRUE
+  active     BOOLEAN NOT NULL DEFAULT TRUE,
+  tenant_id  INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
-CREATE TABLE IF NOT EXISTS properties (
+-- ─── Subjects (a coisa monitorada: hotel | posto | SKU) ──────────────────────
+-- Renomeado de 'properties'. Idempotente: renomeia se o banco legado ainda tem
+-- 'properties' e 'subjects' nao existe.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'properties')
+     AND NOT EXISTS (SELECT FROM information_schema.tables
+                     WHERE table_schema = 'public' AND table_name = 'subjects') THEN
+    ALTER TABLE properties RENAME TO subjects;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS subjects (
   id                  SERIAL PRIMARY KEY,
   name                TEXT NOT NULL,
-  -- Consulta enviada ao Google Hotels via SerpAPI
-  serp_query          TEXT NOT NULL,
-  -- Token do hotel na SerpAPI. Cacheado para economizar 1 requisicao por varredura.
+  vertical            TEXT NOT NULL DEFAULT 'hotel',
+  -- Campos especificos de hotel (mantidos como colunas; 'attrs' guarda extras
+  -- de outros verticais).
+  serp_query          TEXT,
   serp_property_token TEXT,
   city                TEXT,
   currency            TEXT NOT NULL DEFAULT 'BRL',
   direct_url          TEXT,
+  attrs               JSONB NOT NULL DEFAULT '{}',
   active              BOOLEAN NOT NULL DEFAULT TRUE,
+  tenant_id           INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE subjects ADD COLUMN IF NOT EXISTS vertical  TEXT NOT NULL DEFAULT 'hotel';
+ALTER TABLE subjects ADD COLUMN IF NOT EXISTS attrs     JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE subjects ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
--- Cada alvo = 1 requisicao SerpAPI por varredura. E aqui que o orcamento e gasto.
---
--- Dois modos:
---   'rolling' -- janela movel: check-in = hoje + horizon_days. A data anda todo
---                dia, entao serve para acompanhar o comportamento geral do
---                canal, nao a curva de uma estadia especifica.
---   'fixed'   -- data de calendario fixa. Amostrada todo dia, revela a curva
---                real de preco daquela estadia conforme ela se aproxima.
-CREATE TABLE IF NOT EXISTS scan_targets (
+-- ─── Targets (cada alvo ativo = 1 requisicao por varredura) ──────────────────
+-- Renomeado de 'scan_targets'.
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name = 'scan_targets')
+     AND NOT EXISTS (SELECT FROM information_schema.tables
+                     WHERE table_schema = 'public' AND table_name = 'targets') THEN
+    ALTER TABLE scan_targets RENAME TO targets;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS targets (
   id           SERIAL PRIMARY KEY,
-  property_id  INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  property_id  INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
   label        TEXT NOT NULL,
-  horizon_days INTEGER NOT NULL,
+  mode         TEXT NOT NULL DEFAULT 'rolling',   -- 'rolling' | 'fixed'
+  horizon_days INTEGER,                            -- so no modo 'rolling'
   los          INTEGER NOT NULL DEFAULT 2,
   adults       INTEGER NOT NULL DEFAULT 2,
+  check_in     DATE,                               -- modo 'fixed'
+  check_out    DATE,                               -- modo 'fixed'
+  auto_key     TEXT,                               -- 'weekend'|'midweek' se automatico; NULL se manual
+  params       JSONB NOT NULL DEFAULT '{}',        -- parametros por-vertical (ex.: fuel_type)
   active       BOOLEAN NOT NULL DEFAULT TRUE,
+  tenant_id    INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
   UNIQUE (property_id, horizon_days, los, adults)
 );
+-- Colunas do modo 'fixed' e multi-tenant, idempotentes p/ bancos legados.
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS mode      TEXT NOT NULL DEFAULT 'rolling';
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS check_in  DATE;
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS check_out DATE;
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS auto_key  TEXT;
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS params    JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE targets ALTER COLUMN horizon_days DROP NOT NULL;
 
--- Colunas do modo 'fixed'. Idempotente: bancos ja provisionados recebem aqui.
-ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'rolling';
-ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_in  DATE;
-ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS check_out DATE;
--- horizon_days so faz sentido no modo 'rolling'
-ALTER TABLE scan_targets ALTER COLUMN horizon_days DROP NOT NULL;
--- 'weekend' | 'midweek' quando o alvo foi gerado automaticamente; NULL se manual
-ALTER TABLE scan_targets ADD COLUMN IF NOT EXISTS auto_key TEXT;
-
--- Evita cadastrar a mesma estadia duas vezes. Parcial: nao afeta 'rolling',
--- que ja tem a sua propria UNIQUE.
+-- Impede duplicar a mesma estadia fixa (nao afeta 'rolling').
 CREATE UNIQUE INDEX IF NOT EXISTS idx_targets_fixed
-  ON scan_targets (property_id, check_in, check_out, adults)
+  ON targets (property_id, check_in, check_out, adults)
   WHERE mode = 'fixed';
 
+-- ─── Varreduras ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS scans (
   id             SERIAL PRIMARY KEY,
   trigger        TEXT NOT NULL DEFAULT 'schedule' CHECK (trigger IN ('schedule', 'manual')),
@@ -82,39 +180,40 @@ CREATE TABLE IF NOT EXISTS scans (
   targets_ok     INTEGER NOT NULL DEFAULT 0,
   rates_captured INTEGER NOT NULL DEFAULT 0,
   findings_count INTEGER NOT NULL DEFAULT 0,
-  message        TEXT
+  message        TEXT,
+  tenant_id      INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE scans ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
 CREATE TABLE IF NOT EXISTS rates (
   id          BIGSERIAL PRIMARY KEY,
   scan_id     INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  property_id INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
   channel_id  INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-  target_id   INTEGER REFERENCES scan_targets(id) ON DELETE SET NULL,
+  target_id   INTEGER REFERENCES targets(id) ON DELETE SET NULL,
   check_in    DATE NOT NULL,
   check_out   DATE NOT NULL,
   los         INTEGER NOT NULL,
   adults      INTEGER NOT NULL,
-  -- Diaria media, moeda da propriedade
   price       NUMERIC(12,2) NOT NULL,
   currency    TEXT NOT NULL DEFAULT 'BRL',
   source_raw  TEXT,
-  captured_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id   INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE rates ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
-CREATE INDEX IF NOT EXISTS idx_rates_scan       ON rates(scan_id);
-CREATE INDEX IF NOT EXISTS idx_rates_lookup     ON rates(property_id, check_in, channel_id);
-CREATE INDEX IF NOT EXISTS idx_rates_captured   ON rates(captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rates_scan     ON rates(scan_id);
+CREATE INDEX IF NOT EXISTS idx_rates_lookup   ON rates(property_id, check_in, channel_id);
+CREATE INDEX IF NOT EXISTS idx_rates_captured ON rates(captured_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rates_tenant   ON rates(tenant_id, property_id, check_in, channel_id);
 
--- Uma violacao = um canal OTA vendendo fora da regra contra a tarifa ancora.
 CREATE TABLE IF NOT EXISTS findings (
   id            BIGSERIAL PRIMARY KEY,
   scan_id       INTEGER NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
-  property_id   INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  -- NULL para 'missing_direct': o achado é sobre a ausência da âncora, não sobre
-  -- um canal específico.
-  channel_id    INTEGER REFERENCES channels(id) ON DELETE CASCADE,
-  target_id     INTEGER REFERENCES scan_targets(id) ON DELETE SET NULL,
+  property_id   INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+  channel_id    INTEGER REFERENCES channels(id) ON DELETE CASCADE,  -- NULL p/ missing_direct
+  target_id     INTEGER REFERENCES targets(id) ON DELETE SET NULL,
   check_in      DATE NOT NULL,
   check_out     DATE NOT NULL,
   kind          TEXT NOT NULL CHECK (kind IN ('undercut', 'overcut', 'missing_direct', 'missing_channel')),
@@ -125,27 +224,30 @@ CREATE TABLE IF NOT EXISTS findings (
   severity      TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'serious', 'critical')),
   status        TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'acknowledged', 'resolved')),
   notified_at   TIMESTAMPTZ,
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id     INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
-
--- Bancos criados antes desta mudanca ainda tem channel_id NOT NULL; remover a
--- restricao e no-op quando ela ja nao existe.
+-- Bancos criados antes de missing_direct ainda tem channel_id NOT NULL.
 ALTER TABLE findings ALTER COLUMN channel_id DROP NOT NULL;
+ALTER TABLE findings ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
 CREATE INDEX IF NOT EXISTS idx_findings_scan    ON findings(scan_id);
 CREATE INDEX IF NOT EXISTS idx_findings_open    ON findings(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_findings_channel ON findings(channel_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_findings_tenant  ON findings(tenant_id, status, created_at DESC);
 
--- Destinatarios dos alertas de paridade no WhatsApp.
+-- ─── WhatsApp ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS whatsapp_recipients (
   id         SERIAL PRIMARY KEY,
   name       TEXT NOT NULL,
-  phone      TEXT NOT NULL UNIQUE,   -- E.164 sem '+', ex: 5581999998888
+  phone      TEXT NOT NULL UNIQUE,           -- UNIQUE composta (tenant_id, phone) fica p/ o endurecimento
   jid        TEXT,
   is_group   BOOLEAN NOT NULL DEFAULT FALSE,
   active     BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id  INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE whatsapp_recipients ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
 CREATE TABLE IF NOT EXISTS notifications (
   id           BIGSERIAL PRIMARY KEY,
@@ -156,27 +258,43 @@ CREATE TABLE IF NOT EXISTS notifications (
   status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
   error        TEXT,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  sent_at      TIMESTAMPTZ
+  sent_at      TIMESTAMPTZ,
+  tenant_id    INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
--- Consumo da SerpAPI por mes. Chave 'YYYY-MM'. O contador e a fonte da verdade
--- do orcamento; incrementado ANTES da chamada para nunca estourar por corrida.
+-- ─── Orcamento SerpAPI por mes ───────────────────────────────────────────────
+-- PK (month) mantida na F1; migra p/ (tenant_id, connector_key, month) no
+-- endurecimento (junto com o budget.js por-tenant). As colunas ja entram.
 CREATE TABLE IF NOT EXISTS api_usage (
-  month      TEXT PRIMARY KEY,
-  used       INTEGER NOT NULL DEFAULT 0,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  month         TEXT PRIMARY KEY,
+  used          INTEGER NOT NULL DEFAULT 0,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id     INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
+  connector_key TEXT NOT NULL DEFAULT 'hotel_serpapi'
 );
+ALTER TABLE api_usage ADD COLUMN IF NOT EXISTS tenant_id     INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE api_usage ADD COLUMN IF NOT EXISTS connector_key TEXT NOT NULL DEFAULT 'hotel_serpapi';
 
+-- ─── Settings (PK (key) na F1; migra p/ (tenant_id, key) no endurecimento) ──
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id  INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE
 );
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
 
+-- ─── Audit log (tenant_id/actor_id NULL p/ acoes de plataforma/superadmin) ──
 CREATE TABLE IF NOT EXISTS audit_log (
   id         BIGSERIAL PRIMARY KEY,
   actor      TEXT,
   action     TEXT NOT NULL,
   detail     JSONB,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  tenant_id  INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+  actor_id   INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL;
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_id  INTEGER REFERENCES users(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at DESC);

@@ -70,7 +70,7 @@ export async function priceTrend ({ days = 30, targetId = null } = {}) {
   // grafico plota um de cada vez, senao misturaria niveis de preco.
   const { rows: targets } = await query(
     `SELECT t.id, t.label, t.mode, t.check_in, t.check_out, t.horizon_days
-     FROM scan_targets t JOIN properties p ON p.id = t.property_id
+     FROM targets t JOIN subjects p ON p.id = t.property_id
      WHERE t.active AND p.active
      ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
   )
@@ -188,8 +188,8 @@ export async function listFindings ({ days = 30, severity = null, channel = null
             p.name AS property_name, t.label AS target_label, t.los
      FROM findings f
      LEFT JOIN channels c ON c.id = f.channel_id
-     LEFT JOIN properties p ON p.id = f.property_id
-     LEFT JOIN scan_targets t ON t.id = f.target_id
+     LEFT JOIN subjects p ON p.id = f.property_id
+     LEFT JOIN targets t ON t.id = f.target_id
      WHERE ${clauses.join(' AND ')}
        AND f.kind IN ('undercut','overcut','missing_direct')
      ORDER BY f.created_at DESC,
@@ -212,7 +212,7 @@ export async function currentRates () {
             t.label AS target_label, t.horizon_days, t.mode
      FROM rates r
      JOIN channels c ON c.id = r.channel_id
-     LEFT JOIN scan_targets t ON t.id = r.target_id
+     LEFT JOIN targets t ON t.id = r.target_id
      WHERE r.scan_id = (SELECT id FROM last)
      ORDER BY r.check_in, c.sort_order`
   )

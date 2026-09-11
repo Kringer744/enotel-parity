@@ -154,7 +154,7 @@ router.get('/serpapi/diagnose', wrap(async (req, res) => {
     `SELECT t.id, t.label, t.mode, t.check_in, t.check_out, t.horizon_days,
             t.los, t.adults, t.active,
             p.name AS property_name, p.serp_query, p.serp_property_token
-     FROM scan_targets t JOIN properties p ON p.id = t.property_id
+     FROM targets t JOIN subjects p ON p.id = t.property_id
      WHERE t.active AND p.active
      ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
   )
@@ -215,8 +215,8 @@ router.get('/properties', wrap(async (req, res) => {
     `SELECT p.*,
             COALESCE(json_agg(t.* ORDER BY t.horizon_days)
                      FILTER (WHERE t.id IS NOT NULL), '[]') AS targets
-     FROM properties p
-     LEFT JOIN scan_targets t ON t.property_id = p.id
+     FROM subjects p
+     LEFT JOIN targets t ON t.property_id = p.id
      GROUP BY p.id ORDER BY p.id`
   )
   res.json(rows)
@@ -269,7 +269,7 @@ router.post('/targets', wrap(async (req, res) => {
     const auto = `${checkIn.split('-').reverse().slice(0, 2).join('/')} · ${nights} ${nights === 1 ? 'noite' : 'noites'}`
 
     const { rows } = await query(
-      `INSERT INTO scan_targets (property_id, label, mode, check_in, check_out, los, adults)
+      `INSERT INTO targets (property_id, label, mode, check_in, check_out, los, adults)
        VALUES ($1,$2,'fixed',$3,$4,$5,$6)
        ON CONFLICT (property_id, check_in, check_out, adults) WHERE mode = 'fixed'
          DO UPDATE SET label = EXCLUDED.label, active = TRUE
@@ -284,7 +284,7 @@ router.post('/targets', wrap(async (req, res) => {
     return res.status(400).json({ error: 'Informe o numero de dias da janela movel' })
   }
   const { rows } = await query(
-    `INSERT INTO scan_targets (property_id, label, mode, horizon_days, los, adults)
+    `INSERT INTO targets (property_id, label, mode, horizon_days, los, adults)
      VALUES ($1,$2,'rolling',$3,$4,$5)
      ON CONFLICT (property_id, horizon_days, los, adults)
        DO UPDATE SET label = EXCLUDED.label, active = TRUE
@@ -298,7 +298,7 @@ router.post('/targets', wrap(async (req, res) => {
 router.patch('/targets/:id', wrap(async (req, res) => {
   const { active } = req.body || {}
   const { rows } = await query(
-    'UPDATE scan_targets SET active = $2 WHERE id = $1 RETURNING *',
+    'UPDATE targets SET active = $2 WHERE id = $1 RETURNING *',
     [num(req.params.id), Boolean(active)]
   )
   if (!rows[0]) return res.status(404).json({ error: 'Alvo nao encontrado' })
@@ -306,7 +306,7 @@ router.patch('/targets/:id', wrap(async (req, res) => {
 }))
 
 router.delete('/targets/:id', wrap(async (req, res) => {
-  await query('DELETE FROM scan_targets WHERE id = $1', [num(req.params.id)])
+  await query('DELETE FROM targets WHERE id = $1', [num(req.params.id)])
   await audit(req.user.email, 'target.delete', { id: req.params.id })
   res.json({ deleted: true })
 }))

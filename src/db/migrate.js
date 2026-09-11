@@ -7,8 +7,12 @@ import { config } from '../config.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-// Canais monitorados. 'patterns' casa (lowercase, substring) o campo "source"
-// devolvido pelo Google Hotels. As cores vem da paleta categorica validada.
+// Tenant #1 = Enotel. O schema.sql ja garante a linha; aqui e a referencia usada
+// pelos seeds. Multi-tenant real (varios) e config, nao reescrita.
+const TENANT_ID = 1
+
+// Canais monitorados do Enotel. 'patterns' casa (lowercase, substring) o campo
+// "source" do Google Hotels. Cores da paleta categorica validada.
 const CHANNELS = [
   { slug: 'direct', name: 'Enotel (site oficial)', kind: 'direct', sort_order: 0, color: '#2a78d6',
     patterns: ['enotel', 'official site', 'site oficial', 'hotel website', 'book on the official'] },
@@ -27,7 +31,6 @@ const CHANNELS = [
 ]
 
 // Tres horizontes cobrem last-minute, janela de reserva e planejamento.
-// 3 alvos x 30 varreduras = 90 requisicoes/mes, dentro das 250 do plano.
 const DEFAULT_TARGETS = [
   { label: 'Curto prazo (7 dias)', horizon_days: 7, los: 2, adults: 2 },
   { label: 'Janela padrao (30 dias)', horizon_days: 30, los: 2, adults: 2 },
@@ -36,45 +39,23 @@ const DEFAULT_TARGETS = [
 
 const DEFAULT_SETTINGS = {
   parity: {
-    // Diferenca abaixo da qual nada e reportado (ruido de arredondamento/cambio)
     tolerance_pct: 1.0,
     tolerance_abs: 5.0,
-    // Faixas de severidade sobre o desconto percentual da OTA frente ao direto
     severity: { warning: 1.0, serious: 5.0, critical: 10.0 },
-    // Reportar tambem OTA MAIS CARA que o direto (nao e violacao, e perda de conversao)
     report_overcut: false,
     overcut_min_pct: 15.0
   },
   notifications: {
     enabled: true,
-    // Nao notificar achados apenas 'info'
     min_severity: 'warning',
-    // Nao dispara WhatsApp se a varredura nao achou nada
     silent_when_clean: true,
     send_daily_summary: true
   }
 }
 
-async function seedChannels () {
-  for (const c of CHANNELS) {
-    await query(
-      `INSERT INTO channels (slug, name, kind, patterns, color, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (slug) DO UPDATE
-         SET name = EXCLUDED.name,
-             kind = EXCLUDED.kind,
-             patterns = EXCLUDED.patterns,
-             color = EXCLUDED.color,
-             sort_order = EXCLUDED.sort_order`,
-      [c.slug, c.name, c.kind, c.patterns, c.color, c.sort_order]
-    )
-  }
-}
-
 // A consulta precisa trazer o hotel na LISTA do Google Hotels. "Enotel Porto de
 // Galinhas" sozinho devolve zero resultados; incluir cidade e estado resolve.
-// O token foi confirmado contra a API e evita a requisicao de descoberta.
-const PROPERTY = {
+const SUBJECT = {
   name: 'Enotel Porto de Galinhas',
   serpQuery: 'Enotel resort Ipojuca Pernambuco',
   serpToken: 'ChgIzcua6s28ueG-ARoLL2cvMXRtOGtzeGMQAQ',
@@ -82,72 +63,158 @@ const PROPERTY = {
   directUrl: 'https://www.enotel.com.br/'
 }
 
-async function seedProperty () {
-  const { rows } = await query('SELECT id, serp_query FROM properties ORDER BY id LIMIT 1')
+/**
+ * Conector de hotel do tenant #1. A credencial (api key) segue vindo da env
+ * (config.serpapi) na F1; a migracao p/ tenant_connectors.config e o §11.4.
+ * Aqui so registramos o teto/reserva e que o conector e MEDIDO (cota dura).
+ */
+async function seedTenantConnectors () {
+  await query(
+    `INSERT INTO tenant_connectors (tenant_id, connector_key, monthly_limit, reserve, metered)
+     VALUES ($1, 'hotel_serpapi', $2, $3, TRUE)
+     ON CONFLICT (tenant_id, connector_key) DO NOTHING`,
+    [TENANT_ID, config.serpapi.monthlyLimit, config.serpapi.reserve]
+  )
+}
+
+/**
+ * Bancos legados (Enotel single-tenant): o admin unico tinha role 'admin' e
+ * tenant_id nulo. Converte para o vocabulario novo ANTES do CHECK de role.
+ * superadmin (se existir) mantem tenant_id NULL.
+ */
+async function migrateLegacyUsers () {
+  await query("UPDATE users SET role = 'tenant_admin' WHERE role = 'admin'")
+  await query(
+    'UPDATE users SET tenant_id = $1 WHERE tenant_id IS NULL AND role <> $2',
+    [TENANT_ID, 'superadmin']
+  )
+}
+
+/**
+ * CHECK de role so DEPOIS do backfill (senao a migracao quebra num banco legado
+ * com role='admin'). Guardado: idempotente entre boots.
+ */
+async function ensureRoleCheck () {
+  await query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_check') THEN
+        ALTER TABLE users ADD CONSTRAINT users_role_check
+          CHECK (role IN ('superadmin', 'tenant_admin', 'viewer'));
+      END IF;
+    END $$;
+  `)
+}
+
+async function seedChannels () {
+  for (const c of CHANNELS) {
+    await query(
+      `INSERT INTO channels (slug, name, kind, patterns, color, sort_order, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (slug) DO UPDATE
+         SET name = EXCLUDED.name,
+             kind = EXCLUDED.kind,
+             patterns = EXCLUDED.patterns,
+             color = EXCLUDED.color,
+             sort_order = EXCLUDED.sort_order`,
+      [c.slug, c.name, c.kind, c.patterns, c.color, c.sort_order, TENANT_ID]
+    )
+  }
+}
+
+async function seedSubject () {
+  const { rows } = await query('SELECT id, serp_query FROM subjects ORDER BY id LIMIT 1')
 
   if (rows.length > 0) {
-    // Reparo de bancos ja provisionados com a consulta que nao retornava nada.
+    // Reparo de bancos ja provisionados com a consulta que nao retornava nada
+    // (trava de regressao do bug historico #1).
     if (rows[0].serp_query === 'Enotel Porto de Galinhas') {
       await query(
-        'UPDATE properties SET serp_query = $2, serp_property_token = $3 WHERE id = $1',
-        [rows[0].id, PROPERTY.serpQuery, PROPERTY.serpToken]
+        'UPDATE subjects SET serp_query = $2, serp_property_token = $3 WHERE id = $1',
+        [rows[0].id, SUBJECT.serpQuery, SUBJECT.serpToken]
       )
-      console.log('[migrate] consulta SerpAPI da propriedade corrigida')
+      console.log('[migrate] consulta SerpAPI do subject corrigida')
     }
     return rows[0].id
   }
 
   const { rows: created } = await query(
-    `INSERT INTO properties (name, serp_query, serp_property_token, city, currency, direct_url)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [PROPERTY.name, PROPERTY.serpQuery, PROPERTY.serpToken, PROPERTY.city, 'BRL', PROPERTY.directUrl]
+    `INSERT INTO subjects (name, vertical, serp_query, serp_property_token, city, currency, direct_url, tenant_id)
+     VALUES ($1, 'hotel', $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [SUBJECT.name, SUBJECT.serpQuery, SUBJECT.serpToken, SUBJECT.city, 'BRL', SUBJECT.directUrl, TENANT_ID]
   )
-  const propertyId = created[0].id
+  const subjectId = created[0].id
 
   for (const t of DEFAULT_TARGETS) {
     await query(
-      `INSERT INTO scan_targets (property_id, label, horizon_days, los, adults)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO targets (property_id, label, mode, horizon_days, los, adults, tenant_id)
+       VALUES ($1, $2, 'rolling', $3, $4, $5, $6)
        ON CONFLICT (property_id, horizon_days, los, adults) DO NOTHING`,
-      [propertyId, t.label, t.horizon_days, t.los, t.adults]
+      [subjectId, t.label, t.horizon_days, t.los, t.adults, TENANT_ID]
     )
   }
-  return propertyId
+  return subjectId
 }
 
 async function seedSettings () {
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     await query(
-      `INSERT INTO settings (key, value) VALUES ($1, $2)
+      `INSERT INTO settings (key, value, tenant_id) VALUES ($1, $2, $3)
        ON CONFLICT (key) DO NOTHING`,
-      [key, JSON.stringify(value)]
+      [key, JSON.stringify(value), TENANT_ID]
     )
   }
 }
 
+/** Admin do tenant #1 (Enotel). Fresh: nasce como tenant_admin. */
 async function seedAdmin () {
   const { rows } = await query('SELECT id FROM users WHERE email = $1', [config.admin.email])
   if (rows.length > 0) return
   const hash = await bcrypt.hash(config.admin.password, 10)
   await query(
-    'INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, $4)',
-    [config.admin.email, hash, config.admin.name, 'admin']
+    'INSERT INTO users (email, password_hash, name, role, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+    [config.admin.email, hash, config.admin.name, 'tenant_admin', TENANT_ID]
   )
-  console.log(`[migrate] usuario administrador criado: ${config.admin.email}`)
+  console.log(`[migrate] administrador do tenant #1 criado: ${config.admin.email}`)
+}
+
+/**
+ * Superadmin da Fluxo (plataforma, tenant_id NULL). So e criado se as credenciais
+ * vierem por env (SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD) -- segredo fora do repo.
+ * Sem elas, apenas avisa: o superadmin pode ser criado depois.
+ */
+async function seedSuperadmin () {
+  const email = (process.env.SUPERADMIN_EMAIL || '').toLowerCase().trim()
+  const password = process.env.SUPERADMIN_PASSWORD || ''
+  if (!email || !password) {
+    console.warn('[migrate] SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD nao definidos - superadmin nao criado')
+    return
+  }
+  const { rows } = await query('SELECT id FROM users WHERE email = $1', [email])
+  if (rows.length > 0) return
+  const hash = await bcrypt.hash(password, 10)
+  await query(
+    'INSERT INTO users (email, password_hash, name, role, tenant_id) VALUES ($1, $2, $3, $4, NULL)',
+    [email, hash, process.env.SUPERADMIN_NAME || 'Superadmin Fluxo', 'superadmin']
+  )
+  console.log(`[migrate] superadmin da plataforma criado: ${email}`)
 }
 
 export async function migrate () {
   const sql = await readFile(join(here, 'schema.sql'), 'utf8')
-  await query(sql)
+  await query(sql)                 // estrutura + tenant #1 + tenant_id (backfill via DEFAULT)
+  await seedTenantConnectors()
+  await migrateLegacyUsers()       // admin -> tenant_admin, tenant_id nulo -> #1
+  await seedAdmin()                // fresh: admin do tenant #1
+  await seedSuperadmin()           // opcional, via env
+  await ensureRoleCheck()          // CHECK de role SO depois dos roles validos
   await seedChannels()
-  await seedProperty()
+  await seedSubject()
   await seedSettings()
-  await seedAdmin()
-  console.log('[migrate] schema e dados iniciais aplicados')
+  console.log('[migrate] schema e dados iniciais aplicados (multi-tenant, tenant #1 = Enotel)')
 }
 
 // Permite `npm run migrate` isoladamente, alem do boot do servidor.
-// pathToFileURL normaliza tanto '/app/src/...' quanto 'C:\Users\...'.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   migrate()
     .then(() => pool.end())

@@ -21,6 +21,27 @@ export function query (text, params) {
   return pool.query(text, params)
 }
 
+/**
+ * Escopo de tenant OBRIGATORIO (RFC secao 4, Camada 1 -- escopo de aplicacao).
+ * Falha ALTO se o tenant nao for um inteiro: esquecer o escopo vira erro, nao
+ * vazamento silencioso entre clientes. Convencao: todo SQL de negocio filtra
+ * `tenant_id = $1` e passa `scope.tenantId` como 1o parametro. A 2a barreira
+ * (Postgres RLS) entra no endurecimento (§4.2), com app role nao-superuser.
+ *
+ *   const scope = forTenant(req.tenantId)
+ *   scope.query('SELECT * FROM findings WHERE tenant_id = $1 AND status = $2',
+ *               [scope.tenantId, 'open'])
+ */
+export function forTenant (tenantId) {
+  if (!Number.isInteger(tenantId)) {
+    throw new Error('escopo de tenant ausente: tenantId precisa ser um inteiro')
+  }
+  return {
+    tenantId,
+    query: (text, params = []) => query(text, params)
+  }
+}
+
 /** Executa fn dentro de uma transacao, com rollback em qualquer excecao. */
 export async function withTransaction (fn) {
   const client = await pool.connect()

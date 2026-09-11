@@ -84,7 +84,7 @@ export async function ensureAutoTargets ({ force = false } = {}) {
   const isGenerationDay = today.getUTCDay() === TUESDAY
 
   const { rows: existing } = await query(
-    `SELECT COUNT(*)::int AS n FROM scan_targets
+    `SELECT COUNT(*)::int AS n FROM targets
      WHERE auto_key IS NOT NULL AND active AND check_in > CURRENT_DATE`
   )
   const bootstrap = existing[0].n === 0
@@ -93,18 +93,18 @@ export async function ensureAutoTargets ({ force = false } = {}) {
     return { generated: [], skipped: 'fora do dia de geracao' }
   }
 
-  const { rows: properties } = await query(
-    'SELECT id FROM properties WHERE active ORDER BY id'
+  const { rows: subjects } = await query(
+    'SELECT id FROM subjects WHERE active ORDER BY id'
   )
   const periods = computeAutoPeriods(today)
   const generated = []
 
-  for (const p of properties) {
+  for (const p of subjects) {
     for (const period of periods) {
       // O indice unico parcial impede duplicar a mesma estadia; o DO NOTHING
       // deixa a operacao idempotente se a varredura rodar duas vezes no dia.
       const { rows } = await query(
-        `INSERT INTO scan_targets
+        `INSERT INTO targets
            (property_id, label, mode, check_in, check_out, los, adults, auto_key)
          VALUES ($1, $2, 'fixed', $3, $4, 2, $5, $6)
          ON CONFLICT (property_id, check_in, check_out, adults) WHERE mode = 'fixed'
