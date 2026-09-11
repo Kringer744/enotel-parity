@@ -24,7 +24,9 @@
 
 import assert from 'node:assert/strict'
 
-const PANEL = (process.env.EASYPANEL_URL || 'http://187.127.3.206:3000').replace(/\/+$/, '')
+// Endereco do painel vem SEMPRE do ambiente — nao hardcodar o IP interno do
+// Easypanel num repo publico (disclosure de infra). Ver CONTEXTO-ENOTEL §1.
+const PANEL = (process.env.EASYPANEL_URL || '').replace(/\/+$/, '')
 const TOKEN = process.env.EASYPANEL_TOKEN || ''
 const PROJECT = process.env.EASYPANEL_PROJECT || 'proxy'
 const SERVICE = process.env.EASYPANEL_SERVICE || 'enotel'
@@ -216,6 +218,10 @@ async function main () {
 
   if (process.argv.includes('--self-test')) { selfTest(); return }
 
+  if (!PANEL) {
+    console.error('Faltou EASYPANEL_URL no ambiente (ex.: http://SEU-PAINEL:3000). Ver CONTEXTO-ENOTEL §1.')
+    process.exit(1)
+  }
   if (!TOKEN) {
     console.error('Faltou EASYPANEL_TOKEN no ambiente. (Use --self-test para validar offline.)')
     process.exit(1)

@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 import { query } from '../db/pool.js'
 import { config } from '../config.js'
 
@@ -110,8 +111,28 @@ export const requireRole = (...roles) => (req, res, next) => {
   res.status(403).json({ error: 'Permissao insuficiente' })
 }
 
-export async function audit (actor, action, detail = null) {
-  await query('INSERT INTO audit_log (actor, action, detail) VALUES ($1,$2,$3)', [
-    actor, action, detail ? JSON.stringify(detail) : null
-  ]).catch(() => {})
+// Registro de auditoria. `actorId` (users.id, pode ser null p/ acao publica) +
+// `tenantId` (null p/ acao de plataforma). `actor` = texto legivel (e-mail).
+// NUNCA passar segredo/senha/token em `detail` (Bastiao §9). Falha critica loga
+// em stderr em vez de sumir silenciosamente.
+export async function audit (tenantId, actorId, actor, action, detail = null) {
+  await query(
+    'INSERT INTO audit_log (tenant_id, actor_id, actor, action, detail) VALUES ($1,$2,$3,$4,$5)',
+    [tenantId ?? null, actorId ?? null, actor ?? null, action, detail ? JSON.stringify(detail) : null]
+  ).catch((err) => {
+    console.error('[audit] falhou:', action, err.message)
+  })
 }
+
+// ─── Helpers de credencial e convite ─────────────────────────────────────────
+
+export const hashPassword = (plain) => bcrypt.hash(String(plain ?? ''), 10)
+
+export const verifyPassword = (plain, hash) =>
+  bcrypt.compare(String(plain ?? ''), String(hash ?? '')).catch(() => false)
+
+// Token de convite/reset: 32 bytes aleatorios. O cru so viaja no link (uma vez);
+// no banco guarda-se apenas o SHA-256 (hashToken), entao vazamento do banco nao
+// entrega convites validos.
+export const genToken = () => crypto.randomBytes(32).toString('hex')
+export const hashToken = (raw) => crypto.createHash('sha256').update(String(raw ?? '')).digest('hex')

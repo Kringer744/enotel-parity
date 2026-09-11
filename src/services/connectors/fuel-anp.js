@@ -1,4 +1,5 @@
 import { Connector } from './base.js'
+import { loadAnpCsv as defaultLoadAnpCsv } from './anp-dataset.js'
 
 /**
  * FuelConnector (ANP) -- ESQUELETO da Fase 3.
@@ -177,20 +178,15 @@ export class FuelConnector extends Connector {
   }
 
   /**
-   * FASE 3: baixar o CSV da praca (dados-abertos ANP), decodificar latin1, cache
-   * ~7 dias (arquivo semanal), e a estrategia de ancora informada pelo cliente
-   * quando a ANP nao coletou o posto dele na semana. Injetar via ctx um
-   * `ctx.dataset.loadAnpCsv(uf)` mantem o conector testavel e sem acoplar em HTTP.
+   * Carrega as linhas da praca. Usa `ctx.dataset.loadAnpCsv` quando injetado
+   * (testes, ou uma fonte alternativa por tenant); senao cai no loader de exemplo
+   * `anp-dataset.js` (download dados-abertos ANP + decode latin1 + cache ~7 dias).
+   * F3: validar contra um arquivo real da praca antes de registrar o vertical fuel.
    */
   async _loadRows (target, ctx) {
-    if (ctx?.dataset?.loadAnpCsv) {
-      const { uf } = fuelParams(target)
-      const text = await ctx.dataset.loadAnpCsv(uf)
-      return parseAnpCsv(text)
-    }
-    throw new Error(
-      'FuelConnector._loadRows nao implementado (Fase 3): plugar download/cache do arquivo ANP ' +
-      'por praca. Nucleo de parsing (parseAnpCsv/rowsToOffers) ja pronto e testado.'
-    )
+    const { uf } = fuelParams(target)
+    const load = ctx?.dataset?.loadAnpCsv ?? defaultLoadAnpCsv
+    const text = await load(uf)
+    return parseAnpCsv(text)
   }
 }

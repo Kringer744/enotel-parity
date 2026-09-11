@@ -111,7 +111,7 @@ async function seedChannels () {
     await query(
       `INSERT INTO channels (slug, name, kind, patterns, color, sort_order, tenant_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (slug) DO UPDATE
+       ON CONFLICT (tenant_id, slug) DO UPDATE
          SET name = EXCLUDED.name,
              kind = EXCLUDED.kind,
              patterns = EXCLUDED.patterns,
@@ -160,7 +160,7 @@ async function seedSettings () {
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     await query(
       `INSERT INTO settings (key, value, tenant_id) VALUES ($1, $2, $3)
-       ON CONFLICT (key) DO NOTHING`,
+       ON CONFLICT (tenant_id, key) DO NOTHING`,
       [key, JSON.stringify(value), TENANT_ID]
     )
   }

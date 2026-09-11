@@ -94,7 +94,7 @@ export async function ensureAutoTargets ({ force = false } = {}) {
   }
 
   const { rows: subjects } = await query(
-    'SELECT id FROM subjects WHERE active ORDER BY id'
+    'SELECT id, tenant_id FROM subjects WHERE active ORDER BY id'
   )
   const periods = computeAutoPeriods(today)
   const generated = []
@@ -105,12 +105,12 @@ export async function ensureAutoTargets ({ force = false } = {}) {
       // deixa a operacao idempotente se a varredura rodar duas vezes no dia.
       const { rows } = await query(
         `INSERT INTO targets
-           (property_id, label, mode, check_in, check_out, los, adults, auto_key)
-         VALUES ($1, $2, 'fixed', $3, $4, 2, $5, $6)
+           (property_id, label, mode, check_in, check_out, los, adults, auto_key, tenant_id)
+         VALUES ($1, $2, 'fixed', $3, $4, 2, $5, $6, $7)
          ON CONFLICT (property_id, check_in, check_out, adults) WHERE mode = 'fixed'
            DO NOTHING
          RETURNING id, label`,
-        [p.id, period.label, period.checkIn, period.checkOut, cfg.adults, period.key]
+        [p.id, period.label, period.checkIn, period.checkOut, cfg.adults, period.key, p.tenant_id]
       )
       if (rows[0]) generated.push(rows[0].label)
     }

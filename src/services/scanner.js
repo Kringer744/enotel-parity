@@ -1,5 +1,7 @@
 import { query } from '../db/pool.js'
-import * as serp from './serpapi.js'
+import * as serp from './serpapi.js' // ainda usado por resolveDates (datesForHorizon)
+import { config } from '../config.js'
+import { connectorForVertical } from './connectors/index.js'
 import * as parity from './parity.js'
 import * as budget from '../lib/budget.js'
 import { getSettings } from './settings.js'
@@ -23,7 +25,7 @@ async function loadChannels (tenantId) {
 async function loadTargets (tenantId) {
   const { rows } = await query(
     `SELECT t.*, s.name AS property_name, s.serp_query, s.serp_property_token,
-            s.currency, s.id AS property_id
+            s.currency, s.vertical, s.id AS property_id
      FROM targets t
      JOIN subjects s ON s.id = t.property_id
      WHERE t.active AND s.active AND t.tenant_id = $1
@@ -70,22 +72,36 @@ async function expirePastTargets (tenantId) {
   return rows.map((r) => r.label)
 }
 
-/** Garante o property_token em cache; custa 1 requisicao apenas na primeira vez. */
+/**
+ * Monta o ctx injetado no conector. F1: credenciais do config + guarda de orcamento
+ * global (respeita o teto SerpAPI de 250/mes via budget.consume dentro do conector).
+ * §11.4: troca por credenciais/limite de tenant_connectors -- sem tocar no conector.
+ */
+function buildCtx (target, opts) {
+  return {
+    credentials: { apiKey: config.serpapi.key, endpoint: config.serpapi.endpoint },
+    budget,
+    currency: target.currency || 'BRL',
+    allowReserve: Boolean(opts?.allowReserve)
+  }
+}
+
+/**
+ * Garante o handle (property_token) em cache; custa 1 requisicao apenas na primeira
+ * vez. `discover` NAO persiste -- a gravacao do handle no subject e feita aqui.
+ */
 async function ensureToken (tenantId, target, dates, opts) {
   if (target.serp_property_token) return { token: target.serp_property_token, spent: 0 }
 
-  const found = await serp.findPropertyToken(target.serp_query, {
-    checkIn: dates.checkIn,
-    checkOut: dates.checkOut,
-    adults: target.adults
-  }, opts)
+  const connector = connectorForVertical(target.vertical || 'hotel')
+  const { handle } = await connector.discover(target, buildCtx(target, opts))
 
   await query('UPDATE subjects SET serp_property_token = $1 WHERE id = $2 AND tenant_id = $3', [
-    found.token,
+    handle,
     target.property_id,
     tenantId
   ])
-  return { token: found.token, spent: 1 }
+  return { token: handle, spent: 1 }
 }
 
 async function processTarget (tenantId, scanId, target, channels, settings, opts) {
@@ -93,15 +109,15 @@ async function processTarget (tenantId, scanId, target, channels, settings, opts
   const los = dates.los
   let spent = 0
 
+  const connector = connectorForVertical(target.vertical || 'hotel')
+
   const { token, spent: tokenSpent } = await ensureToken(tenantId, target, dates, opts)
   spent += tokenSpent
 
-  const { offers } = await serp.fetchOffers(token, target.serp_query, {
-    checkIn: dates.checkIn,
-    checkOut: dates.checkOut,
-    adults: target.adults,
-    los
-  }, opts)
+  // O conector resolve as datas internamente a partir do target e devolve Offer[]
+  // ja normalizado (com currency). Passamos o handle recem-garantido. O budget e
+  // consumido dentro do conector via ctx.budget (respeita o teto de 250/mes).
+  const { offers } = await connector.fetchOffers({ ...target, serp_property_token: token }, buildCtx(target, opts))
   spent += 1
 
   // Mapeia ofertas -> canais monitorados. Ofertas de canais nao cadastrados

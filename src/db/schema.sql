@@ -298,3 +298,41 @@ CREATE TABLE IF NOT EXISTS audit_log (
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL;
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS actor_id  INTEGER REFERENCES users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id, created_at DESC);
+
+-- ─── Uniques/PKs compostas por tenant (multi-tenant real) ────────────────────
+-- Um 2o tenant precisa dos PROPRIOS canais/settings/destinatarios sem colidir
+-- com os do tenant #1. Trocamos as uniques globais por compostas com tenant_id.
+-- Idempotente (DROP/ADD guardado). targets NAO precisa: property_id ja pertence
+-- a um subject de um tenant, entao (property_id, ...) nao colide entre tenants.
+
+-- channels: UNIQUE(slug) -> UNIQUE(tenant_id, slug)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channels_slug_key') THEN
+    ALTER TABLE channels DROP CONSTRAINT channels_slug_key;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'channels_tenant_slug_key') THEN
+    ALTER TABLE channels ADD CONSTRAINT channels_tenant_slug_key UNIQUE (tenant_id, slug);
+  END IF;
+END $$;
+
+-- whatsapp_recipients: UNIQUE(phone) -> UNIQUE(tenant_id, phone) fica p/ o
+-- endurecimento coordenado com o Nucleo (a rota POST /whatsapp/recipients usa
+-- ON CONFLICT (phone) + scopeTenant; troca junto). uazapi nao configurado -> nao
+-- bloqueia o demo. Por ora mantem UNIQUE(phone) global.
+
+-- settings: PK(key) -> PK(tenant_id, key)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'settings_pkey') THEN
+    ALTER TABLE settings DROP CONSTRAINT settings_pkey;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'settings_tenant_pkey') THEN
+    ALTER TABLE settings ADD CONSTRAINT settings_tenant_pkey PRIMARY KEY (tenant_id, key);
+  END IF;
+END $$;
+
+-- Alvo one-off do 'Ver os precos agora' (E6): entra numa varredura e NAO persiste
+-- na lista de acompanhados (as listagens filtram WHERE NOT ephemeral; o scanner
+-- desativa apos processar). 'Passar a acompanhar' = alvo normal (ephemeral=false).
+ALTER TABLE targets ADD COLUMN IF NOT EXISTS ephemeral BOOLEAN NOT NULL DEFAULT FALSE;
