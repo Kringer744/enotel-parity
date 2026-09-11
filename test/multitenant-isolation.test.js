@@ -155,7 +155,7 @@ test('#F2 gate de schema pos-cutover: tenant_id SEM DEFAULT (all-except api_usag
          JOIN pg_class c ON c.oid = con.conrelid
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname='public' AND c.relname=$1 AND con.contype IN ('p','u')
-          AND (SELECT array_agg(att.attname ORDER BY att.attname)
+          AND (SELECT array_agg(att.attname::text ORDER BY att.attname::text)
                  FROM unnest(con.conkey) k
                  JOIN pg_attribute att ON att.attrelid=con.conrelid AND att.attnum=k) = $2::text[]`,
       [tbl, want])
