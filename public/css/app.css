@@ -26,13 +26,15 @@
   --grid:           #e1e0d9;
   --axis:           #c3c2b7;
 
-  /* Ação / marca white-label (Camada 3 — tenant sobrescreve --brand-*) */
+  /* Ação / marca white-label (Camada 3 — macOS sóbrio, single-hue; tenant só troca --brand-accent).
+     Sem cross-hue (nada de azul→roxo): o "strong" é o mesmo azul mais escuro, o gradiente é um sheen sutil. */
   --brand-accent:        #0071e3;
-  --brand-accent-strong: #5856d6;
-  --brand-gradient:      linear-gradient(160deg, var(--brand-accent), var(--brand-accent-strong));
+  --brand-accent-strong: color-mix(in srgb, var(--brand-accent) 78%, #000);
+  --brand-gradient:      linear-gradient(180deg, var(--brand-accent), var(--brand-accent-strong));
   --accent:              var(--brand-accent);
+  --accent-btn:          var(--accent);   /* fill do botão primário — no escuro aprofunda p/ AA */
   --accent-hover:        color-mix(in srgb, var(--accent) 88%, white);
-  --accent-wash:         color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-wash:         color-mix(in srgb, var(--accent) 12%, transparent);
 
   /* Estado (paleta de status reservada — nunca usada como série) */
   --good:           #0ca30c;
@@ -96,6 +98,7 @@
     --grid:           #2c2c2a;
     --axis:           #383835;
     --brand-accent:   #0a84ff;
+    --accent-btn:     color-mix(in srgb, var(--accent) 82%, #000); /* branco/fill = 5.15:1 (AA) */
     --good-wash:      rgba(12, 163, 12, 0.20);
     --warning-wash:   rgba(250, 178, 25, 0.20);
     --serious-wash:   rgba(236, 131, 90, 0.20);
@@ -131,6 +134,7 @@
   --grid:           #2c2c2a;
   --axis:           #383835;
   --brand-accent:   #0a84ff;
+  --accent-btn:     color-mix(in srgb, var(--accent) 82%, #000); /* branco/fill = 5.15:1 (AA) */
   --good-wash:      rgba(12, 163, 12, 0.20);
   --warning-wash:   rgba(250, 178, 25, 0.20);
   --serious-wash:   rgba(236, 131, 90, 0.20);
@@ -236,7 +240,7 @@ a:hover { text-decoration: underline; }
   width: 52px; height: 52px;
   border-radius: 14px;
   display: grid; place-items: center;
-  background: linear-gradient(160deg, var(--accent), #5856d6);
+  background: var(--brand-gradient);
   color: #fff;
   font-size: 24px;
   margin-bottom: 22px;
@@ -272,7 +276,7 @@ a:hover { text-decoration: underline; }
 }
 .brand-mark {
   width: 32px; height: 32px; border-radius: 9px;
-  background: linear-gradient(160deg, var(--accent), #5856d6);
+  background: var(--brand-gradient);
   color: #fff; display: grid; place-items: center;
   font-size: 15px; font-weight: 700; flex-shrink: 0;
 }

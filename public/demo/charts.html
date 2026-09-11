@@ -269,11 +269,12 @@
   </script>
 
   <style>
-    /* White-label de demonstracao — posto DEPOIS do app.css para vencer no empate
-       de especificidade, valendo tambem no modo escuro. Provisionamento real valida
-       AA (branco sobre o accent >= 4.5) ao salvar o tenant (regra do Lote 1). */
-    :root[data-tenant="fluxo"] { --brand-accent: #6d28d9; --brand-accent-strong: #a855f7; }
-    :root[data-tenant="acme"]  { --brand-accent: #b45309; --brand-accent-strong: #f59e0b; }
+    /* White-label de demonstracao — accents SOBRIOS (macOS), cada tenant troca SO
+       --brand-accent; --brand-accent-strong e --brand-gradient derivam single-hue no :root.
+       Posto DEPOIS do app.css para vencer no empate de especificidade (vale tambem no escuro).
+       Provisionamento real valida AA (branco sobre o accent >= 4.5) ao salvar o tenant (Lote 1). */
+    :root[data-tenant="fluxo"] { --brand-accent: #147a6e; } /* teal sobrio */
+    :root[data-tenant="acme"]  { --brand-accent: #8a5a2b; } /* bronze sobrio */
   </style>
 </body>
 </html>

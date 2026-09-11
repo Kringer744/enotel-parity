@@ -109,7 +109,7 @@ async function renderPeriodChips () {
 }
 
 
-async function pageDashboard (main) {
+export async function pageDashboard (main) {
   main.innerHTML = `
     <div class="page-head">
       <div>

@@ -5,7 +5,7 @@ import { fmtDateTime, escapeHtml, statusBadge, toast, busy, loading, emptyState 
 
 let qrTimer = null
 
-async function pageWhatsApp (main) {
+export async function pageWhatsApp (main) {
   clearInterval(qrTimer)
 
   main.innerHTML = `

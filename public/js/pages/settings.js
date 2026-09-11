@@ -5,7 +5,7 @@ import { TODAY } from '../core/state.js'
 
 /* ═══ Configurações ═══════════════════════════════════════════════════════ */
 
-async function pageSettings (main) {
+export async function pageSettings (main) {
   main.innerHTML = `
     <div class="page-head">
       <div>

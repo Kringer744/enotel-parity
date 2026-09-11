@@ -321,6 +321,46 @@ export const demoFixtures = {
   }
 }
 
+// ─── fixtures das telas de Configuracoes e WhatsApp ──────────────────────────
+const demoSettings = {
+  parity: { tolerance_pct: 1, tolerance_abs: 5, severity: { warning: 1, serious: 5, critical: 10 }, report_overcut: false, overcut_min_pct: 15 },
+  notifications: { enabled: true, min_severity: 'warning', silent_when_clean: true },
+  auto_targets: { enabled: true, adults: 2 }
+}
+const demoAuto = {
+  enabled: true,
+  adults: 2,
+  periods: [
+    { key: 'weekend', checkIn: iso(addDays(TODAY, 4)), checkOut: iso(addDays(TODAY, 6)) },
+    { key: 'midweek', checkIn: iso(addDays(TODAY, 8)), checkOut: iso(addDays(TODAY, 10)) }
+  ]
+}
+const demoDiagnose = {
+  steps: [
+    { ok: true, step: 'Conexao com a fonte de precos', detail: 'Chave ativa, plano Free' },
+    { ok: true, step: 'Saldo real de atualizacoes', detail: '96 de 250 usadas neste mes' },
+    { ok: true, step: 'Periodos ativos', detail: '5 periodos monitorados' },
+    { ok: true, step: 'Ultima atualizacao', detail: 'concluida hoje as 06:10' }
+  ],
+  probe: null
+}
+const demoWa = {
+  status: { configured: true, connected: true, instance: 'enotel-paridade', profileName: 'Enotel Reservas', number: '5581999990000' },
+  contacts: [
+    { jid: '5581999990001@s.whatsapp.net', name: 'Reservas Enotel', phone: '5581999990001', isGroup: false, image: null },
+    { jid: '5581999990002@s.whatsapp.net', name: 'Revenue Management', phone: '5581999990002', isGroup: false, image: null },
+    { jid: '120363000000000000@g.us', name: 'Paridade - Alertas', phone: '', isGroup: true, image: null }
+  ],
+  recipients: [
+    { id: 1, name: 'Revenue Management', phone: '5581999990002', jid: '5581999990002@s.whatsapp.net', is_group: false, active: true },
+    { id: 2, name: 'Paridade - Alertas', phone: '', jid: '120363000000000000@g.us', is_group: true, active: true }
+  ],
+  log: [
+    { created_at: at0610(addDays(TODAY, -1)), recipient_name: 'Revenue Management', phone: '5581999990002', status: 'sent', error: null },
+    { created_at: at0610(addDays(TODAY, -2)), recipient_name: 'Paridade - Alertas', phone: '', status: 'sent', error: null }
+  ]
+}
+
 /**
  * Liga o modo demo: substitui os metodos de leitura do `api` por fixtures.
  * Uso no front (ex.: quando ?demo=1 ou sem backend):
@@ -346,7 +386,28 @@ export function installDemo (api) {
     budget: val(budget),
     budgetSync: () => Promise.resolve(budget),
     properties: val(properties),
-    channels: val(channels)
+    channels: val(channels),
+    // --- Configuracoes ---
+    settings: val(demoSettings),
+    updateSettings: () => Promise.resolve({ ok: true }),
+    autoPreview: val(demoAuto),
+    autoGenerate: () => Promise.resolve({ generated: [] }),
+    createTarget: () => Promise.resolve({ ok: true, id: Date.now() }),
+    toggleTarget: () => Promise.resolve({ ok: true }),
+    deleteTarget: () => Promise.resolve({ ok: true }),
+    diagnose: val(demoDiagnose),
+    // --- WhatsApp ---
+    waStatus: val(demoWa.status),
+    waInit: () => Promise.resolve({ ok: true }),
+    waConnect: () => Promise.resolve({ qrcode: null, paircode: '482913' }),
+    waDisconnect: () => Promise.resolve({ ok: true }),
+    waContacts: val(demoWa.contacts),
+    waRecipients: val(demoWa.recipients),
+    waAddRecipient: () => Promise.resolve({ ok: true }),
+    waToggleRecipient: () => Promise.resolve({ ok: true }),
+    waRemoveRecipient: () => Promise.resolve({ ok: true }),
+    waTest: () => Promise.resolve({ ok: true }),
+    waNotifications: val(demoWa.log)
   })
   return api
 }

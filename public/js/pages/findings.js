@@ -6,7 +6,7 @@ import { findingsTable, wireFindingRows } from '../components/findings-table.js'
 
 /* ═══ Violações ═══════════════════════════════════════════════════════════ */
 
-async function pageFindings (main) {
+export async function pageFindings (main) {
   main.innerHTML = `
     <div class="page-head">
       <div>

@@ -75,7 +75,7 @@ function wireFixedPeriod (main) {
   })
 }
 
-async function pageRates (main) {
+export async function pageRates (main) {
   main.innerHTML = `
     <div class="page-head">
       <div>
