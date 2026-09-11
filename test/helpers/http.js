@@ -89,6 +89,14 @@ export async function seedRecipientMarker (pool, tenantId, marker) {
   )
 }
 
+/** Marcador em `channels` (list endpoint GET /channels) — outra superficie de read-leak. */
+export async function seedChannelMarker (pool, tenantId, marker) {
+  await pool.query(
+    "INSERT INTO channels (tenant_id, slug, name, kind) VALUES ($1,$2,$3,'ota')",
+    [tenantId, marker.toLowerCase(), marker]
+  )
+}
+
 /** ON DELETE CASCADE em tenants limpa todos os filhos seedados. */
 export async function cleanupTenants (pool, slugs) {
   await pool.query('DELETE FROM tenants WHERE slug = ANY($1)', [slugs])

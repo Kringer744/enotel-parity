@@ -27,6 +27,8 @@ const slugB = `httpiso-b-${TAG}`
 const superEmail = `super-${TAG}@fluxo.test`
 const markerA = `MARK-A-${TAG}`
 const markerB = `MARK-B-${TAG}`
+const chanA = `CHANA${TAG}`
+const chanB = `CHANB${TAG}`
 const PW = 'senha-de-teste-123'
 
 let ctx = null
@@ -45,6 +47,8 @@ before(async () => {
     await H.seedUser(pool, { tenantId: null, email: superEmail, name: 'Super', role: 'superadmin', password: PW })
     await H.seedRecipientMarker(pool, aId, markerA)
     await H.seedRecipientMarker(pool, bId, markerB)
+    await H.seedChannelMarker(pool, aId, chanA)
+    await H.seedChannelMarker(pool, bId, chanB)
 
     const adminA = await H.login(app.base, `admin-a-${TAG}@t.test`, PW)
     const viewerA = await H.login(app.base, `viewer-a-${TAG}@t.test`, PW)
@@ -79,10 +83,18 @@ test('#F2 (a) matriz endpoint x tenant: token de A ve o proprio dado, nunca o de
     const r = await H.api(app.base, { token: adminA.token, path })
     assert.equal(r.status, 200, `GET ${path} deveria responder 200 para tenant_admin de A`)
   }
-  // No-leak concreto: a lista de destinatarios de A traz o marcador de A e NUNCA o de B.
+  // READ-LEAK GATE (pedido do Bastiao): listas de A trazem o marcador de A e
+  // NUNCA o de B. Estes asserts ficam VERMELHOS contra o codigo atual (as rotas
+  // de leitura ainda nao escopam tenant: reports.js/settings/budget sem tenant_id
+  // e GET /channels faz `SELECT * FROM channels`) — e o GATE de NO-GO multi-tenant:
+  // so fica verde quando o service/query layer passar a filtrar por tenant.
   const rec = await H.api(app.base, { token: adminA.token, path: '/api/whatsapp/recipients' })
   assert.match(rec.text, new RegExp(markerA), 'A ve o proprio destinatario')
-  assert.doesNotMatch(rec.text, new RegExp(markerB), 'A NUNCA ve o destinatario de B')
+  assert.doesNotMatch(rec.text, new RegExp(markerB), 'READ-LEAK: A NUNCA ve o destinatario de B')
+
+  const chans = await H.api(app.base, { token: adminA.token, path: '/api/channels' })
+  assert.match(chans.text, new RegExp(chanA), 'A ve o proprio canal')
+  assert.doesNotMatch(chans.text, new RegExp(chanB), 'READ-LEAK: A NUNCA ve o canal de B (GET /channels precisa filtrar tenant_id)')
 })
 
 test('#F2 (b) tenant_id forjado (header X-Tenant-Id / query) e IGNORADO — escopo so do claim', { skip }, async (t) => {

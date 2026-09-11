@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseAnpCsv, rowsToOffers, FuelConnector } from '../src/services/connectors/fuel-anp.js'
+import { clearAnpCache } from '../src/services/connectors/anp-dataset.js'
 
 // Fixture no formato real da ANP (por revenda): `;` separador, virgula decimal,
 // data dd/mm/aaaa. Mesmo posto (CNPJ 111) aparece 2x -> fica a coleta mais recente.
@@ -79,6 +80,22 @@ test('FuelConnector: fetchOffers usa loader injetado via ctx.dataset (F3 pluga o
   )
   assert.equal(offers.length, 2)
   assert.ok(offers.some((o) => o.official))
+})
+
+test('FuelConnector: sem ctx.dataset cai no loader de exemplo (anp-dataset via fetch)', async () => {
+  const realFetch = globalThis.fetch
+  clearAnpCache()
+  globalThis.fetch = async () => ({ ok: true, status: 200, arrayBuffer: async () => Buffer.from(CSV, 'latin1') })
+  try {
+    const { offers } = await new FuelConnector().fetchOffers(
+      { params: { municipio: 'Ipojuca', uf: 'PE', produto: 'gasolina', own_cnpj: '11111111000111' } },
+      { currency: 'BRL' } // sem dataset injetado -> usa o loader default
+    )
+    assert.equal(offers.length, 2)
+  } finally {
+    globalThis.fetch = realFetch
+    clearAnpCache()
+  }
 })
 
 // Nota: o FuelConnector so entra no registry (connectors/index.js) na Fase 3,
