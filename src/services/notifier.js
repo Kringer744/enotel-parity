@@ -88,15 +88,16 @@ async function findingsForScan (scanId, minSeverity) {
 }
 
 /** Dispara os alertas de uma varredura para todos os destinatarios ativos. */
-export async function notifyScan (scanId) {
-  const settings = await getSettings()
+export async function notifyScan (scanId, tenantId = 1) {
+  const settings = await getSettings(tenantId)
   const notif = settings.notifications
 
   if (!notif.enabled) return { sent: false, reason: 'notificacoes desativadas' }
   if (!uazapi.isConfigured()) return { sent: false, reason: 'uazapi nao configurada' }
 
   const { rows: recipients } = await query(
-    'SELECT * FROM whatsapp_recipients WHERE active ORDER BY id'
+    'SELECT * FROM whatsapp_recipients WHERE active AND tenant_id = $1 ORDER BY id',
+    [tenantId]
   )
   if (recipients.length === 0) {
     return { sent: false, reason: 'nenhum destinatario selecionado' }
@@ -110,7 +111,8 @@ export async function notifyScan (scanId) {
   const { rows: scanRows } = await query('SELECT * FROM scans WHERE id = $1', [scanId])
   const scan = scanRows[0]
   const { rows: propRows } = await query(
-    'SELECT name FROM subjects WHERE active ORDER BY id LIMIT 1'
+    'SELECT name FROM subjects WHERE active AND tenant_id = $1 ORDER BY id LIMIT 1',
+    [tenantId]
   )
   const usage = await getUsage()
 
@@ -124,10 +126,12 @@ export async function notifyScan (scanId) {
   const results = []
   for (const r of recipients) {
     const target = r.jid || r.phone
+    // tenant_id EXPLICITO: o corpo (body) carrega os achados daquele tenant --
+    // sem isto cairia no DEFAULT 1 e vazaria via GET /whatsapp/notifications (Bastiao).
     const { rows: nRows } = await query(
-      `INSERT INTO notifications (scan_id, recipient_id, phone, body)
-       VALUES ($1,$2,$3,$4) RETURNING id`,
-      [scanId, r.id, r.phone, body]
+      `INSERT INTO notifications (scan_id, recipient_id, phone, body, tenant_id)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [scanId, r.id, r.phone, body, tenantId]
     )
     const notificationId = nRows[0].id
 

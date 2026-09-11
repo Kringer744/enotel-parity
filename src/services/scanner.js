@@ -190,14 +190,14 @@ async function processTarget (tenantId, scanId, target, channels, settings, opts
  * orcamento por-tenant e a notificacao por-tenant sao o §11.4 (proxima peca).
  */
 async function scanTenant (tenantId, { trigger = 'schedule' } = {}) {
-  const settings = await getSettings()
+  const settings = await getSettings(tenantId)
   const channels = await loadChannels(tenantId)
   // Antes de contar alvos: retira os de data fixa que ja passaram, senao eles
   // entrariam no orcamento desta varredura.
   const expired = await expirePastTargets(tenantId).catch(() => [])
   // Gera os periodos da semana (fim de semana e meio de semana). So age as
   // tercas, ou no primeiro boot, para o sistema ja subir com dados.
-  const auto = await ensureAutoTargets().catch(() => ({ generated: [] }))
+  const auto = await ensureAutoTargets({ tenantId }).catch(() => ({ generated: [] }))
   const targets = await loadTargets(tenantId)
   // Disparo manual pode usar a reserva de emergencia; o agendador nunca pode.
   const opts = { allowReserve: trigger === 'manual' }
@@ -265,7 +265,7 @@ async function scanTenant (tenantId, { trigger = 'schedule' } = {}) {
       [scanId, status, spent, ok, rates, findings, notes.join(' | ') || null]
     )
 
-    const notification = await notifyScan(scanId).catch((err) => ({
+    const notification = await notifyScan(scanId, tenantId).catch((err) => ({
       sent: false,
       error: err.message
     }))
@@ -281,21 +281,23 @@ async function scanTenant (tenantId, { trigger = 'schedule' } = {}) {
 }
 
 /**
- * Executa uma varredura completa: itera todos os tenants ativos e roda uma
- * varredura escopada para cada um. A guarda `running` cobre o ciclo inteiro
- * (1 replica -- o cron nao pode duplicar).
- * @param {'schedule'|'manual'} trigger
+ * Executa uma varredura completa. Sem `tenantId`, itera todos os tenants ativos
+ * (agendador global). Com `tenantId`, escopa a UM tenant -- e o que o disparo
+ * manual de um tenant_admin usa, para nao varrer (nem gastar orcamento com) os
+ * outros tenants. A guarda `running` cobre o ciclo inteiro (1 replica -- o cron
+ * nao pode duplicar).
+ * @param {{trigger?: 'schedule'|'manual', tenantId?: number}} [opts]
  */
-export async function runScan ({ trigger = 'schedule' } = {}) {
+export async function runScan ({ trigger = 'schedule', tenantId = null } = {}) {
   if (running) {
     return { skipped: true, reason: 'Uma varredura ja esta em andamento' }
   }
   running = true
 
   try {
-    const { rows: tenants } = await query(
-      'SELECT id FROM tenants WHERE active ORDER BY id'
-    )
+    const { rows: tenants } = Number.isInteger(tenantId)
+      ? { rows: [{ id: tenantId }] }
+      : await query('SELECT id FROM tenants WHERE active ORDER BY id')
     const runs = []
     for (const t of tenants) {
       try {

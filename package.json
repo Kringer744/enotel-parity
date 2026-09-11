@@ -13,6 +13,7 @@
     "seed": "node src/db/seed.js",
     "scan": "node src/cli/run-scan.js",
     "add-tenant": "node src/cli/add-tenant.js",
+    "cutover": "node src/cli/cutover-multitenant.js",
     "dev": "node --watch src/server.js",
     "test": "node --test \"test/**/*.test.js\""
   },

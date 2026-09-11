@@ -125,6 +125,9 @@ CREATE TABLE IF NOT EXISTS subjects (
 ALTER TABLE subjects ADD COLUMN IF NOT EXISTS vertical  TEXT NOT NULL DEFAULT 'hotel';
 ALTER TABLE subjects ADD COLUMN IF NOT EXISTS attrs     JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE subjects ADD COLUMN IF NOT EXISTS tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE;
+-- Legado (properties) tinha serp_query NOT NULL; subjects de outros verticais
+-- (ex.: combustivel) nao tem consulta SerpAPI. Harmoniza legado com fresh.
+ALTER TABLE subjects ALTER COLUMN serp_query DROP NOT NULL;
 
 -- ─── Targets (cada alvo ativo = 1 requisicao por varredura) ──────────────────
 -- Renomeado de 'scan_targets'.

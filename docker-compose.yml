@@ -49,5 +49,30 @@ services:
       SCAN_TIMEZONE: America/Recife
       SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
 
+  # Postgres de TESTE local, efemero e descartavel. Profile "test" -> NAO sobe
+  # no `docker compose up` normal. Exposto so em 127.0.0.1:5433. Uso:
+  #   docker compose --profile test up -d db-test
+  #   export TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5433/parity_test?sslmode=disable'
+  #   DATABASE_URL="$TEST_DATABASE_URL" JWT_SECRET=dev PGSSLMODE=disable NODE_ENV=test npm run migrate
+  #   npm test
+  #   docker compose --profile test down   # descarta (tmpfs -> zero persistencia)
+  # SEGURANCA: banco de TESTE descartavel; TEST_DATABASE_URL NUNCA aponta pra producao (servidor 3).
+  db-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: parity_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d parity_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
 volumes:
   pgdata:

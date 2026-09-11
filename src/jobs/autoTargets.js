@@ -75,8 +75,10 @@ export function computeAutoPeriods (today = recifeToday()) {
  * alvo automatico existe ainda (primeiro boot), para o sistema ja subir com
  * dados em vez de esperar a proxima terca.
  */
-export async function ensureAutoTargets ({ force = false } = {}) {
-  const settings = await getSettings()
+export async function ensureAutoTargets ({ force = false, tenantId = null } = {}) {
+  // Escopado ao tenant quando `tenantId` e dado (chamada do scanner por tenant e
+  // da rota /targets/auto/generate do tenant_admin); sem ele, opera global.
+  const settings = await getSettings(Number.isInteger(tenantId) ? tenantId : 1)
   const cfg = settings.auto_targets
   if (!cfg.enabled) return { generated: [], skipped: 'desativado' }
 
@@ -85,7 +87,9 @@ export async function ensureAutoTargets ({ force = false } = {}) {
 
   const { rows: existing } = await query(
     `SELECT COUNT(*)::int AS n FROM targets
-     WHERE auto_key IS NOT NULL AND active AND check_in > CURRENT_DATE`
+     WHERE auto_key IS NOT NULL AND active AND check_in > CURRENT_DATE
+       AND ($1::int IS NULL OR tenant_id = $1)`,
+    [tenantId]
   )
   const bootstrap = existing[0].n === 0
 
@@ -94,7 +98,8 @@ export async function ensureAutoTargets ({ force = false } = {}) {
   }
 
   const { rows: subjects } = await query(
-    'SELECT id, tenant_id FROM subjects WHERE active ORDER BY id'
+    'SELECT id, tenant_id FROM subjects WHERE active AND ($1::int IS NULL OR tenant_id = $1) ORDER BY id',
+    [tenantId]
   )
   const periods = computeAutoPeriods(today)
   const generated = []

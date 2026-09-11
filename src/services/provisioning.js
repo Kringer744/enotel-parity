@@ -24,6 +24,31 @@ export class ProvisionError extends Error {
 
 const normEmail = (v) => String(v || '').toLowerCase().trim()
 
+// Tabelas-canario do gate de cutover (Bastiao 1c / Nucleo A). Enquanto tenant_id
+// tiver DEFAULT nelas, a plataforma NAO passou pelo cutover multi-tenant e criar
+// um 2o tenant e inseguro (um INSERT que esquecesse o tenant_id cairia no #1).
+// provisionTenant e all-explicit, mas o guard e fail-closed por defesa: recusa
+// provisionar ate o cutover (npm run cutover), que so roda apos a matriz de
+// isolamento HTTP da Sentinela ficar verde. Guard tanto na rota (Nucleo) quanto
+// na CLI, porque ambas caem aqui.
+const CANARY_TABLES = ['findings', 'rates', 'targets', 'scans', 'channels', 'subjects', 'notifications']
+
+async function assertCutoverDone (client) {
+  const { rows } = await client.query(
+    `SELECT count(*)::int AS n FROM information_schema.columns
+     WHERE table_schema = 'public' AND column_name = 'tenant_id'
+       AND table_name = ANY($1) AND column_default IS NOT NULL`,
+    [CANARY_TABLES]
+  )
+  if (rows[0].n > 0) {
+    throw new ProvisionError(
+      'Cutover multi-tenant pendente: rode "npm run cutover" (apos a matriz de isolamento verde) ' +
+      'antes de provisionar um novo tenant.',
+      { status: 409 }
+    )
+  }
+}
+
 // Branding e superficie de stored-XSS (Bastiao §2): so chaves conhecidas,
 // logo_url https, cores hex. O front aplica como valor CSS / atributo src, nunca innerHTML.
 function sanitizeBranding (input) {
@@ -81,6 +106,9 @@ export async function provisionTenant (input = {}) {
   const branding = sanitizeBranding(input.branding)
 
   return withTransaction(async (client) => {
+    // Gate de cutover (fail-closed): sem cutover, nao provisiona 2o tenant.
+    await assertCutoverDone(client)
+
     const dup = await client.query('SELECT 1 FROM tenants WHERE slug = $1', [slug])
     if (dup.rowCount) throw new ProvisionError(`slug "${slug}" ja esta em uso`, { status: 409 })
 

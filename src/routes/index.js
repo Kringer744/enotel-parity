@@ -401,7 +401,9 @@ router.post('/scans/run', requireRole('tenant_admin'), wrap(async (req, res) => 
   // Responde na hora: uma varredura leva dezenas de segundos e nao deve
   // segurar a requisicao do navegador.
   res.status(202).json({ started: true })
-  scanner.runScan({ trigger: 'manual' }).catch((err) => {
+  // Escopa ao tenant do requisitante (tenant_admin). superadmin sem contexto
+  // (tenantId null) roda global, como o agendador.
+  scanner.runScan({ trigger: 'manual', tenantId: req.tenantId }).catch((err) => {
     console.error('[scan] falhou:', err.message)
   })
 }))
@@ -528,7 +530,7 @@ router.get('/targets/auto/preview', requireTenantContext, wrap(async (req, res) 
 }))
 
 router.post('/targets/auto/generate', requireRole('tenant_admin'), wrap(async (req, res) => {
-  const result = await ensureAutoTargets({ force: true })
+  const result = await ensureAutoTargets({ force: true, tenantId: req.tenantId })
   await audit(req.tenantId, req.user.sub, req.user.email, 'targets.auto.generate', result)
   res.json(result)
 }))
