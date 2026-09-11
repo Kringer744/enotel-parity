@@ -1,19 +1,16 @@
 import { api, getToken, setToken, downloadCsv } from './api.js'
 import {
-  fmtDateTime, fmtDate, fmtRelative, pct, severityBadge, statusBadge,
-  escapeHtml, toast, busy, skeleton, loading, emptyState, refreshIcons, KIND
+  fmtDateTime, fmtDate, fmtRelative, pct, statusBadge,
+  escapeHtml, toast, busy, skeleton, loading, emptyState, refreshIcons
 } from './ui.js'
 import { lineChart, barChart, heatmap, money2 } from './charts.js'
+import { state, TODAY } from './core/state.js'
+import { periodPicker, wirePeriod } from './components/period.js'
+import { waitForScan } from './components/scan.js'
+import { findingsTable, wireFindingRows } from './components/findings-table.js'
+import { renderRanking } from './components/ranking.js'
 
 const root = document.getElementById('root')
-const state = { user: null, page: 'dashboard', days: 30, openCount: 0, trendTarget: null }
-
-// Piso dos seletores de data. Check-in no proprio dia e valido: e reserva
-// de ultima hora, e o Google Hotels devolve tarifa para hoje.
-const TODAY = (() => {
-  const d = new Date()
-  return d.toISOString().slice(0, 10)
-})()
 
 const NAV = [
   { id: 'dashboard', icon: 'layout-dashboard', label: 'Painel' },
@@ -143,23 +140,6 @@ async function go (page) {
   }
   // Cada página monta o HTML por innerHTML, então os ícones só viram SVG aqui.
   refreshIcons(main)
-}
-
-function periodPicker () {
-  return `
-    <div class="segmented" id="period">
-      ${[7, 30, 90].map((d) => `
-        <button data-days="${d}" class="${state.days === d ? 'active' : ''}">${d} dias</button>
-      `).join('')}
-    </div>`
-}
-
-function wirePeriod (rerender) {
-  document.getElementById('period')?.querySelectorAll('button').forEach((b) =>
-    b.addEventListener('click', () => {
-      state.days = Number(b.dataset.days)
-      rerender()
-    }))
 }
 
 /* ═══ Painel ══════════════════════════════════════════════════════════════ */
@@ -461,138 +441,6 @@ async function pageDashboard (main) {
   refreshIcons(main)
 }
 
-/* ═══ Ranking: site oficial vs. OTAs ══════════════════════════════════════ */
-
-/**
- * Agrega o snapshot mais recente por canal. O ranking é ordenado pelo PIOR
- * desvio, não pela média: uma OTA que fura a paridade em uma única data já é
- * um problema contratual, e a média esconderia isso.
- */
-function buildRanking (rates, compliance) {
-  const byChannel = new Map()
-  let anchorSum = 0
-  let anchorCount = 0
-
-  for (const g of rates) {
-    if (g.directPrice) { anchorSum += g.directPrice; anchorCount += 1 }
-    for (const o of g.offers) {
-      if (o.kind !== 'ota' || o.deltaPct === null) continue
-      if (!byChannel.has(o.slug)) {
-        byChannel.set(o.slug, { slug: o.slug, name: o.name, color: o.color, deltas: [], prices: [] })
-      }
-      const entry = byChannel.get(o.slug)
-      entry.deltas.push(o.deltaPct)
-      entry.prices.push(o.price)
-    }
-  }
-
-  const withData = [...byChannel.values()].map((e) => {
-    const avg = e.deltas.reduce((a, b) => a + b, 0) / e.deltas.length
-    return {
-      ...e,
-      hasData: true,
-      worst: Math.min(...e.deltas),
-      avg: Math.round(avg * 10) / 10,
-      avgPrice: e.prices.reduce((a, b) => a + b, 0) / e.prices.length,
-      undercuts: e.deltas.filter((d) => d < -1).length,
-      dates: e.deltas.length
-    }
-  }).sort((a, b) => a.worst - b.worst)
-
-  // Canais monitorados que não apareceram na oferta entram no fim, marcados
-  // como sem dados -- nunca como 0% de conformidade, que leria como violação.
-  const seen = new Set(withData.map((r) => r.slug))
-  const missing = compliance
-    .filter((c) => !seen.has(c.slug))
-    .map((c) => ({ slug: c.slug, name: c.name, color: c.color, hasData: false }))
-
-  return {
-    rows: [...withData, ...missing],
-    anchor: anchorCount > 0 ? anchorSum / anchorCount : null,
-    dateCount: rates.length
-  }
-}
-
-function renderRanking (host, rates, compliance) {
-  const { rows, anchor, dateCount } = buildRanking(rates, compliance)
-
-  if (rows.length === 0 || anchor === null) {
-    host.innerHTML = emptyState('info',
-      anchor === null && rates.length > 0
-        ? 'Sem tarifa do site oficial na última varredura — não há âncora para comparar.'
-        : 'Nenhuma tarifa coletada ainda. Rode uma varredura para montar o ranking.')
-    refreshIcons(host)
-    return
-  }
-
-  // Escala da barra divergente: o maior desvio absoluto define as pontas.
-  const scale = Math.max(...rows.filter((r) => r.hasData).map((r) => Math.abs(r.worst)), 5)
-
-  host.innerHTML = `
-    <div class="rank-anchor">
-      <i data-lucide="anchor" class="icon-sm"></i>
-      <span class="rank-anchor-label">
-        Tarifa do site oficial · média de ${dateCount} ${dateCount === 1 ? 'data' : 'datas'}
-      </span>
-      <span class="rank-anchor-value">${money2(anchor)}</span>
-    </div>
-    ${rows.map((r, i) => {
-      if (!r.hasData) {
-        return `
-          <div class="rank-row no-data">
-            <div class="rank-pos">—</div>
-            <div class="rank-name">
-              <span class="channel-swatch" style="background:${r.color}"></span>
-              <span><span class="label">${escapeHtml(r.name)}</span></span>
-            </div>
-            <div class="rank-bar"></div>
-            <div class="rank-delta"><span class="sub">sem oferta</span></div>
-            <span class="badge neutral">Sem dados</span>
-          </div>`
-      }
-
-      const violating = r.worst < -1
-      const width = Math.min(50, (Math.abs(r.worst) / scale) * 50)
-      const cls = r.worst < 0 ? 'neg' : 'pos'
-
-      return `
-        <div class="rank-row ${violating ? 'violating' : ''}">
-          <div class="rank-pos">${i + 1}</div>
-          <div class="rank-name">
-            <span class="channel-swatch" style="background:${r.color}"></span>
-            <span>
-              <span class="label">${escapeHtml(r.name)}</span>
-              <span class="sub">${money2(r.avgPrice)} · média de ${r.dates} ${r.dates === 1 ? 'data' : 'datas'}</span>
-            </span>
-          </div>
-          <div class="rank-bar"><span class="${cls}" style="width:${width}%"></span></div>
-          <div class="rank-delta ${cls}">
-            ${r.worst > 0 ? '+' : ''}${pct(r.worst)}
-            <span class="sub">pior desvio</span>
-          </div>
-          ${violating
-            ? `<span class="badge critical">
-                 <i data-lucide="ban" class="icon-sm"></i>
-                 ${r.undercuts} de ${r.dates}
-               </span>`
-            : '<span class="badge good"><i data-lucide="check" class="icon-sm"></i>Em paridade</span>'}
-        </div>`
-    }).join('')}`
-
-  refreshIcons(host)
-}
-
-/** Acompanha a varredura em segundo plano até ela sair de 'running'. */
-async function waitForScan ({ timeoutMs = 120000, intervalMs = 3000 } = {}) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, intervalMs))
-    const [scan] = await api.scans(1).catch(() => [])
-    if (scan && scan.status !== 'running') return scan
-  }
-  return null
-}
-
 /* ═══ Tarifas atuais ══════════════════════════════════════════════════════ */
 
 /**
@@ -768,70 +616,6 @@ async function pageRates (main) {
 }
 
 /* ═══ Violações ═══════════════════════════════════════════════════════════ */
-
-function findingsTable (findings) {
-  if (findings.length === 0) {
-    return emptyState('info', 'Nenhuma violação de paridade no período. Todos os canais em conformidade.')
-  }
-  return `
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Detectado</th><th>Canal</th><th>Check-in</th><th>Check-out</th>
-          <th class="num">Direto</th><th class="num">Canal</th><th class="num">Diferença</th>
-          <th>Severidade</th><th>Status</th><th></th>
-        </tr></thead>
-        <tbody>
-          ${findings.map((f) => `
-            <tr data-id="${f.id}">
-              <td class="muted small">${fmtDateTime(f.created_at)}</td>
-              <td>
-                <span class="channel-key">
-                  <span class="channel-swatch" style="background:${f.channel_color || 'var(--ink-3)'}"></span>
-                  ${escapeHtml(f.channel_name || '—')}
-                </span>
-                <div class="muted small" style="margin-top:2px">${KIND[f.kind] || f.kind}</div>
-              </td>
-              <td class="mono">${fmtDate(f.check_in)}</td>
-              <td class="mono">${fmtDate(f.check_out)}<div class="muted small">${f.los || 2} noites</div></td>
-              <td class="num mono">${money2(f.base_price)}</td>
-              <td class="num mono strong">${money2(f.channel_price)}</td>
-              <td class="num mono" style="color:${f.delta_pct < 0 ? 'var(--critical)' : 'var(--ink-2)'}">
-                ${f.delta_pct === null ? '—' : `${f.delta_pct > 0 ? '+' : ''}${pct(f.delta_pct)}`}
-                <div class="muted small">${f.delta_abs === null ? '' : money2(Math.abs(f.delta_abs)) + '/noite'}</div>
-              </td>
-              <td>${severityBadge(f.severity)}</td>
-              <td>${statusBadge(f.status)}</td>
-              <td>
-                ${f.status === 'open'
-                  ? `<button class="btn secondary small" data-ack="${f.id}">Marcar ciente</button>`
-                  : f.status === 'acknowledged'
-                  ? `<button class="btn secondary small" data-resolve="${f.id}">Resolver</button>`
-                  : ''}
-              </td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`
-}
-
-function wireFindingRows () {
-  document.querySelectorAll('[data-ack],[data-resolve]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.ack || btn.dataset.resolve
-      const status = btn.dataset.ack ? 'acknowledged' : 'resolved'
-      busy(btn, true, '…')
-      try {
-        await api.updateFinding(id, status)
-        toast('Status atualizado', 'ok')
-        go(state.page)
-      } catch (err) {
-        busy(btn, false)
-        toast(err.message, 'error')
-      }
-    })
-  })
-}
 
 async function pageFindings (main) {
   main.innerHTML = `
@@ -1797,6 +1581,7 @@ async function pageSettings (main) {
 /* ═══ Boot ════════════════════════════════════════════════════════════════ */
 
 window.addEventListener('auth:expired', () => renderLogin('Sua sessão expirou. Entre novamente.'))
+window.addEventListener('navigate', (e) => go(e.detail))
 
 async function boot () {
   if (!getToken()) return renderLogin()
