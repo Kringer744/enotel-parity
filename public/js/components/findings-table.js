@@ -16,8 +16,8 @@ export function findingsTable (findings) {
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>Detectado</th><th>Canal</th><th>Check-in</th><th>Check-out</th>
-          <th class="num">Direto</th><th class="num">Canal</th><th class="num">Diferença</th>
+          <th>Detectado</th><th>Canal</th><th>Entrada</th><th>Saída</th>
+          <th class="num">Seu preço</th><th class="num">Canal</th><th class="num">Diferença</th>
           <th>Severidade</th><th>Status</th><th></th>
         </tr></thead>
         <tbody>

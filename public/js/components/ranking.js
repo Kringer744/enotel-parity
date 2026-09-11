@@ -59,8 +59,8 @@ export function renderRanking (host, rates, compliance) {
   if (rows.length === 0 || anchor === null) {
     host.innerHTML = emptyState('info',
       anchor === null && rates.length > 0
-        ? 'Sem tarifa do site oficial na última varredura — não há âncora para comparar.'
-        : 'Nenhuma tarifa coletada ainda. Rode uma varredura para montar o ranking.')
+        ? 'Sem o seu preço oficial na última atualização — não há como comparar.'
+        : 'Nenhum preço coletado ainda. Faça uma atualização para montar o ranking.')
     refreshIcons(host)
     return
   }
@@ -72,7 +72,7 @@ export function renderRanking (host, rates, compliance) {
     <div class="rank-anchor">
       <i data-lucide="anchor" class="icon-sm"></i>
       <span class="rank-anchor-label">
-        Tarifa do site oficial · média de ${dateCount} ${dateCount === 1 ? 'data' : 'datas'}
+        Seu preço oficial · média de ${dateCount} ${dateCount === 1 ? 'data' : 'datas'}
       </span>
       <span class="rank-anchor-value">${money2(anchor)}</span>
     </div>

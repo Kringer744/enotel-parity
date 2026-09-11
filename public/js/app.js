@@ -30,7 +30,7 @@ function renderLogin (message = '') {
         <div class="login-mark"><i data-lucide="shield-check" class="icon-lg"></i></div>
         <h1 style="font-size:22px">Paridade Enotel</h1>
         <p class="page-sub" style="margin-bottom:26px">
-          Monitoramento tarifário nas principais OTAs
+          Monitoramento de preços nos principais canais de venda
         </p>
         ${message ? `<div class="badge critical" style="margin-bottom:16px">${escapeHtml(message)}</div>` : ''}
         <div class="field">
@@ -162,8 +162,8 @@ function wireHeadDates (main) {
   })
 
   const create = async () => {
-    if (!ci.value || !co.value) throw new Error('Escolha check-in e check-out')
-    if (co.value <= ci.value) throw new Error('O check-out precisa ser depois do check-in')
+    if (!ci.value || !co.value) throw new Error('Escolha as datas de entrada e saída')
+    if (co.value <= ci.value) throw new Error('A saída precisa ser depois da entrada')
     const props = await api.properties()
     const prop = props.find((p) => p.active) || props[0]
     if (!prop) throw new Error('Nenhuma propriedade cadastrada')
@@ -180,24 +180,24 @@ function wireHeadDates (main) {
     busy(ev.currentTarget, true, '...')
     try {
       await create()
-      toast('Período monitorado. Entra na próxima varredura.', 'ok')
+      toast('Período adicionado. Entra na próxima atualização.', 'ok')
       await renderPeriodChips()
     } catch (err) { toast(err.message, 'error') }
     busy(ev.currentTarget, false)
   })
 
   document.getElementById('h-pull').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, 'Puxando...')
+    busy(ev.currentTarget, true, 'Atualizando...')
     try {
       await create()
       await api.runScan()
       document.getElementById('ranking').innerHTML =
-        loading('Consultando o Google Hotels para o período escolhido...', 260)
+        loading('Buscando os preços do período escolhido...', 260)
       const scan = await waitForScan()
       if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
-        toast(`${scan.rates_captured} tarifas coletadas`, 'ok')
+        toast(`${scan.rates_captured} preços coletados`, 'ok')
       } else if (scan) {
-        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
       }
       return pageDashboard(main)
     } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
@@ -255,13 +255,13 @@ async function pageDashboard (main) {
         ${periodPicker()}
         <div class="head-dates">
           <i data-lucide="calendar" class="icon-sm"></i>
-          <input type="date" id="h-checkin" min="${TODAY}" title="Check-in">
+          <input type="date" id="h-checkin" min="${TODAY}" title="Entrada">
           <span class="sep">até</span>
-          <input type="date" id="h-checkout" min="${TODAY}" title="Check-out">
-          <button class="btn ghost small" id="h-add">Monitorar</button>
-          <button class="btn small" id="h-pull">Puxar</button>
+          <input type="date" id="h-checkout" min="${TODAY}" title="Saída">
+          <button class="btn ghost small" id="h-add">Acompanhar</button>
+          <button class="btn small" id="h-pull">Ver agora</button>
         </div>
-        <button class="btn secondary" id="run-scan">Varredura agora</button>
+        <button class="btn secondary" id="run-scan">Atualizar agora</button>
       </div>
     </div>
     <div id="period-chips" class="period-chips"></div>
@@ -270,8 +270,8 @@ async function pageDashboard (main) {
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">Site oficial vs. OTAs</div>
-            <div class="card-note">Ranking por desvio frente à tarifa direta</div>
+            <div class="card-title">Seu preço vs. os canais</div>
+            <div class="card-note">Ranking pelo desvio frente ao seu preço oficial</div>
           </div>
         </div>
         <div id="ranking">${loading('Comparando canais...', 260)}</div>
@@ -279,8 +279,8 @@ async function pageDashboard (main) {
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">Tarifa média por canal</div>
-            <div class="card-note" id="trend-note">Diária média em BRL</div>
+            <div class="card-title">Preço médio por canal</div>
+            <div class="card-note" id="trend-note">Diária média em reais</div>
           </div>
           <select class="select" id="trend-target" style="width:auto;max-width:210px" hidden></select>
         </div>
@@ -291,7 +291,7 @@ async function pageDashboard (main) {
       <div class="card-head">
         <div>
           <div class="card-title">Violações recentes</div>
-          <div class="card-note">Canais vendendo abaixo do site oficial</div>
+          <div class="card-note">Canais vendendo abaixo do seu preço oficial</div>
         </div>
         <button class="btn ghost small" id="see-all">
           Ver todas <i data-lucide="arrow-right" class="icon-sm"></i>
@@ -307,21 +307,21 @@ async function pageDashboard (main) {
 
   document.getElementById('run-scan').addEventListener('click', async (ev) => {
     const btn = ev.currentTarget
-    busy(btn, true, 'Varrendo...')
+    busy(btn, true, 'Atualizando...')
     try {
       await api.runScan()
       document.getElementById('ranking').innerHTML =
-        loading('Consultando o Google Hotels via SerpAPI...', 260)
+        loading('Buscando os preços nos canais...', 260)
       document.getElementById('trend').innerHTML =
-        loading('Aguardando as tarifas da varredura...', 300)
+        loading('Aguardando os preços da atualização...', 300)
       document.getElementById('recent').innerHTML =
-        loading('A varredura leva de 10 a 40 segundos...', 200)
+        loading('Isso leva de 10 a 40 segundos...', 200)
 
       const scan = await waitForScan()
       if (scan?.status === 'ok' || scan?.status === 'partial') {
-        toast(`Varredura concluída: ${scan.rates_captured} tarifas, ${scan.findings_count} achados`, 'ok')
+        toast(`Atualização concluída: ${scan.rates_captured} preços, ${scan.findings_count} achados`, 'ok')
       } else if (scan) {
-        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
       }
       if (state.page === 'dashboard') return pageDashboard(main)
     } catch (err) {
@@ -340,8 +340,8 @@ async function pageDashboard (main) {
   renderNav()
 
   document.getElementById('head-sub').textContent = ov.lastScan
-    ? `Última varredura ${fmtRelative(ov.lastScan.started_at)} · ${ov.lastScan.rates_captured} tarifas coletadas`
-    : 'Nenhuma varredura executada ainda'
+    ? `Última atualização ${fmtRelative(ov.lastScan.started_at)} · ${ov.lastScan.rates_captured} preços coletados`
+    : 'Nenhuma atualização feita ainda'
 
   const b = ov.budget
   const budgetTone = b.pctUsed >= 90 ? 'is-critical' : b.pctUsed >= 70 ? 'is-warning' : ''
@@ -355,12 +355,12 @@ async function pageDashboard (main) {
       </div>
     </div>
     <div class="card stat">
-      <div class="stat-label">Conformidade da última varredura</div>
+      <div class="stat-label">Conformidade da última atualização</div>
       <div class="stat-value">${ov.complianceRate === null ? '—' : pct(ov.complianceRate)}</div>
       <div class="stat-meta">${ov.violations} de ${ov.comparisons} comparações fora da paridade</div>
     </div>
     <div class="card stat">
-      <div class="stat-label">Maior desconto de OTA</div>
+      <div class="stat-label">Maior desconto de um canal</div>
       <div class="stat-value">${ov.worstGap ? pct(Math.abs(ov.worstGap.delta_pct)) : '—'}</div>
       <div class="stat-meta">
         ${ov.worstGap
@@ -370,25 +370,25 @@ async function pageDashboard (main) {
     </div>
     <div class="card stat">
       <div class="stat-label">
-        Créditos SerpAPI · ${b.month}
+        Consultas de preço · ${b.month}
         ${b.live
-          ? '<span class="badge good"><i data-lucide="wifi" class="icon-sm"></i>saldo real</span>'
-          : '<span class="badge warning"><i data-lucide="wifi-off" class="icon-sm"></i>contagem local</span>'}
+          ? '<span class="badge good"><i data-lucide="wifi" class="icon-sm"></i>em dia</span>'
+          : '<span class="badge warning"><i data-lucide="wifi-off" class="icon-sm"></i>estimado</span>'}
       </div>
       <div class="stat-value">${b.used}<span style="font-size:18px;color:var(--ink-3)"> / ${b.limit}</span></div>
       <div class="stat-meta">
         ${b.live
-          ? `${b.remaining} restantes na conta${b.planName ? ` · plano ${escapeHtml(b.planName)}` : ''}`
-          : `Sem resposta da conta SerpAPI${b.liveError ? `: ${escapeHtml(b.liveError)}` : ''}`}
+          ? `${b.remaining} restantes este mês`
+          : `Não consegui conferir o saldo agora${b.liveError ? `: ${escapeHtml(b.liveError)}` : ''}`}
       </div>
       <div class="stat-meta">
         ${b.willExceed
           ? `No ritmo atual chega a ${b.projected} até o fim do mês`
-          : `${b.perScan} req/varredura · ${b.daysLeft} dias restantes`}
+          : `${b.perScan} consultas por atualização · renova todo mês`}
       </div>
       <div class="meter ${budgetTone}"><span style="width:${Math.min(100, b.pctUsed)}%"></span></div>
       <button class="btn ghost small" id="sync-budget" style="margin-top:8px;padding-left:0">
-        Sincronizar com a SerpAPI
+        Conferir o saldo
       </button>
     </div>`
 
@@ -397,7 +397,7 @@ async function pageDashboard (main) {
     try {
       const r = await api.budgetSync()
       toast(r.synced
-        ? `Saldo sincronizado: ${r.real} usadas na conta SerpAPI`
+        ? `Saldo conferido: ${r.real} consultas usadas este mês`
         : `Não foi possível ler a conta: ${r.error}`, r.synced ? 'ok' : 'error')
       if (r.synced) pageDashboard(main)
     } catch (err) {
@@ -424,9 +424,9 @@ async function pageDashboard (main) {
   document.getElementById('trend-note').textContent =
     trend.target
       ? (trend.target.mode === 'fixed'
-          ? `Diária média em BRL · check-in ${fmtDate(trend.target.check_in)}`
-          : `Diária média em BRL · ${trend.target.label}`)
-      : 'Diária média em BRL'
+          ? `Diária média em reais · entrada ${fmtDate(trend.target.check_in)}`
+          : `Diária média em reais · ${trend.target.label}`)
+      : 'Diária média em reais'
 
   lineChart(document.getElementById('trend'), {
     dates: trend.dates,
@@ -455,8 +455,8 @@ function wireFixedPeriod (main) {
 
   api.budget().then((b) => {
     hint.textContent =
-      `Puxar agora consome ${b.perScan + 1} requisições (todos os alvos ativos mais este). ` +
-      `Restam ${b.remaining} das ${b.limit} do mês.`
+      `Ver agora usa ${b.perScan + 1} consultas de preço (todos os períodos ativos mais este). ` +
+      `Restam ${b.remaining} de ${b.limit} este mês.`
   }).catch(() => { hint.textContent = '' })
 
   // O check-out nunca pode ser anterior ou igual ao check-in.
@@ -468,8 +468,8 @@ function wireFixedPeriod (main) {
   })
 
   const create = async () => {
-    if (!checkIn.value || !checkOut.value) throw new Error('Escolha check-in e check-out')
-    if (checkOut.value <= checkIn.value) throw new Error('O check-out precisa ser depois do check-in')
+    if (!checkIn.value || !checkOut.value) throw new Error('Escolha as datas de entrada e saída')
+    if (checkOut.value <= checkIn.value) throw new Error('A saída precisa ser depois da entrada')
     const props = await api.properties()
     const prop = props.find((p) => p.active) || props[0]
     if (!prop) throw new Error('Nenhuma propriedade cadastrada')
@@ -486,23 +486,23 @@ function wireFixedPeriod (main) {
     busy(ev.currentTarget, true, 'Salvando...')
     try {
       await create()
-      toast('Período adicionado. Entra na próxima varredura.', 'ok')
+      toast('Período adicionado. Entra na próxima atualização.', 'ok')
     } catch (err) { toast(err.message, 'error') }
     busy(ev.currentTarget, false)
   })
 
   document.getElementById('r-pull').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, 'Puxando...')
+    busy(ev.currentTarget, true, 'Atualizando...')
     try {
       await create()
       await api.runScan()
       document.getElementById('rates').innerHTML =
-        loading('Consultando o Google Hotels para o período escolhido...', 320)
+        loading('Buscando os preços do período escolhido...', 320)
       const scan = await waitForScan()
       if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
-        toast(`${scan.rates_captured} tarifas coletadas`, 'ok')
+        toast(`${scan.rates_captured} preços coletados`, 'ok')
       } else if (scan) {
-        toast(`Varredura ${scan.status}: ${scan.message || 'sem detalhes'}`, 'error')
+        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
       }
       return pageRates(main)
     } catch (err) {
@@ -517,27 +517,27 @@ async function pageRates (main) {
     <div class="page-head">
       <div>
         <h1>Tarifas atuais</h1>
-        <p class="page-sub">Fotografia da última varredura, por data de check-in</p>
+        <p class="page-sub">Fotografia da última atualização, por data de entrada</p>
       </div>
     </div>
 
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div>
-          <div class="card-title">Puxar um período específico</div>
+          <div class="card-title">Ver um período específico</div>
           <div class="card-note">
-            Escolha check-in e check-out. O período passa a ser monitorado
+            Escolha as datas da estadia. O período passa a ser acompanhado
             diariamente até a data chegar, e depois sai sozinho.
           </div>
         </div>
       </div>
       <div class="date-picker">
         <div class="date-field">
-          <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
+          <label><i data-lucide="calendar" class="icon-sm"></i>Entrada</label>
           <input class="input" type="date" id="r-checkin" min="${TODAY}">
         </div>
         <div class="date-field">
-          <label><i data-lucide="calendar-check" class="icon-sm"></i>Check-out</label>
+          <label><i data-lucide="calendar-check" class="icon-sm"></i>Saída</label>
           <input class="input" type="date" id="r-checkout" min="${TODAY}">
         </div>
         <div class="date-field" style="max-width:130px">
@@ -547,13 +547,13 @@ async function pageRates (main) {
               `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
           </select>
         </div>
-        <button class="btn secondary" id="r-add">Só monitorar</button>
-        <button class="btn" id="r-pull">Puxar agora</button>
+        <button class="btn secondary" id="r-add">Só acompanhar</button>
+        <button class="btn" id="r-pull">Ver agora</button>
       </div>
       <p class="muted small" id="r-hint" style="margin-top:10px"></p>
     </div>
 
-    <div id="rates">${loading('Carregando tarifas da última varredura...', 320)}</div>`
+    <div id="rates">${loading('Carregando os preços da última atualização...', 320)}</div>`
 
   wireFixedPeriod(main)
 
@@ -561,7 +561,7 @@ async function pageRates (main) {
   const host = document.getElementById('rates')
 
   if (groups.length === 0) {
-    host.innerHTML = `<div class="card">${emptyState('info', 'Nenhuma tarifa coletada ainda. Rode uma varredura no Painel.')}</div>`
+    host.innerHTML = `<div class="card">${emptyState('info', 'Nenhum preço coletado ainda. Faça uma atualização no Painel.')}</div>`
     return
   }
 
@@ -572,22 +572,22 @@ async function pageRates (main) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div>
-          <div class="card-title">${escapeHtml(g.targetLabel || `Check-in ${fmtDate(g.checkIn)}`)}</div>
+          <div class="card-title">${escapeHtml(g.targetLabel || `Entrada ${fmtDate(g.checkIn)}`)}</div>
           <div class="card-note">
             ${fmtDate(g.checkIn)} → ${fmtDate(g.checkOut)} · ${g.los} noites ·
-            tarifa direta ${g.directPrice ? money2(g.directPrice) : '<span class="badge warning">ausente</span>'}
+            seu preço oficial ${g.directPrice ? money2(g.directPrice) : '<span class="badge warning">ausente</span>'}
           </div>
         </div>
         ${cheapest ? `<div class="badge ${cheapest.kind === 'direct' ? 'good' : 'critical'}">
           ${cheapest.kind === 'direct'
-            ? '<i data-lucide="check" class="icon-sm"></i>Direto é o mais barato'
+            ? '<i data-lucide="check" class="icon-sm"></i>Seu preço é o mais barato'
             : `<i data-lucide="ban" class="icon-sm"></i>${escapeHtml(cheapest.name)} está mais barato`}
         </div>` : ''}
       </div>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>Canal</th><th class="num">Diária</th><th class="num">vs. direto</th><th>Situação</th>
+            <th>Canal</th><th class="num">Diária</th><th class="num">vs. seu preço</th><th>Situação</th>
           </tr></thead>
           <tbody>
             ${sorted.map((o) => `
@@ -595,7 +595,7 @@ async function pageRates (main) {
                 <td>
                   <span class="channel-key">
                     <span class="channel-swatch" style="background:${o.color}"></span>
-                    ${escapeHtml(o.name)}${o.kind === 'direct' ? ' <span class="badge neutral">âncora</span>' : ''}
+                    ${escapeHtml(o.name)}${o.kind === 'direct' ? ' <span class="badge neutral">oficial</span>' : ''}
                   </span>
                 </td>
                 <td class="num strong">${money2(o.price)}</td>
@@ -603,8 +603,8 @@ async function pageRates (main) {
                 <td>${
                   o.kind === 'direct' ? '<span class="badge info">Referência</span>'
                   : o.deltaPct === null ? '<span class="badge neutral">—</span>'
-                  : o.deltaPct < -1 ? '<span class="badge critical"><i data-lucide="ban" class="icon-sm"></i>Fura paridade</span>'
-                  : o.deltaPct > 1 ? '<span class="badge neutral"><i data-lucide="arrow-up" class="icon-sm"></i>Acima do direto</span>'
+                  : o.deltaPct < -1 ? '<span class="badge critical"><i data-lucide="ban" class="icon-sm"></i>Abaixo do seu</span>'
+                  : o.deltaPct > 1 ? '<span class="badge neutral"><i data-lucide="arrow-up" class="icon-sm"></i>Acima do seu</span>'
                   : '<span class="badge good"><i data-lucide="check" class="icon-sm"></i>Em paridade</span>'
                 }</td>
               </tr>`).join('')}
@@ -622,7 +622,7 @@ async function pageFindings (main) {
     <div class="page-head">
       <div>
         <h1>Violações de paridade</h1>
-        <p class="page-sub">Canais vendendo fora da tarifa do site oficial</p>
+        <p class="page-sub">Canais vendendo abaixo do seu preço oficial</p>
       </div>
       <div class="row wrap">
         ${periodPicker()}
@@ -713,9 +713,9 @@ async function pageReport (main) {
       <div class="card-head"><div class="card-title">Resumo executivo</div></div>
       <div class="grid kpi">
         <div class="stat">
-          <div class="stat-label">Varreduras no período</div>
+          <div class="stat-label">Atualizações no período</div>
           <div class="stat-value">${scansOk}</div>
-          <div class="stat-meta">${r.history.reduce((a, s) => a + s.requests_used, 0)} requisições SerpAPI</div>
+          <div class="stat-meta">${r.history.reduce((a, s) => a + s.requests_used, 0)} consultas de preço</div>
         </div>
         <div class="stat">
           <div class="stat-label">Violações detectadas</div>
@@ -725,7 +725,7 @@ async function pageReport (main) {
         <div class="stat">
           <div class="stat-label">Conformidade geral</div>
           <div class="stat-value">${ov.complianceRate === null ? '—' : pct(ov.complianceRate)}</div>
-          <div class="stat-meta">na última varredura concluída</div>
+          <div class="stat-meta">na última atualização concluída</div>
         </div>
         <div class="stat">
           <div class="stat-label">Canal mais crítico</div>
@@ -741,7 +741,7 @@ async function pageReport (main) {
     <div class="grid two" style="margin-bottom:16px">
       <div class="card">
         <div class="card-head"><div>
-          <div class="card-title">Evolução das tarifas</div>
+          <div class="card-title">Evolução dos preços</div>
           <div class="card-note">${r.trend.target ? escapeHtml(r.trend.target.label) : 'Diária média por canal'}</div>
         </div></div>
         <div id="r-trend"></div>
@@ -795,12 +795,12 @@ async function pageReport (main) {
     </div>
 
     <div class="card">
-      <div class="card-head"><div class="card-title">Histórico de varreduras</div></div>
+      <div class="card-head"><div class="card-title">Histórico de atualizações</div></div>
       <div class="table-wrap">
         <table>
           <thead><tr>
             <th>Início</th><th>Origem</th><th>Status</th>
-            <th class="num">Requisições</th><th class="num">Tarifas</th><th class="num">Achados</th><th>Observação</th>
+            <th class="num">Consultas</th><th class="num">Preços</th><th class="num">Achados</th><th>Observação</th>
           </tr></thead>
           <tbody>
             ${r.history.map((s) => `
@@ -866,26 +866,26 @@ async function pageWhatsApp (main) {
     <div class="card" style="margin-top:16px">
       <div class="card-head"><div>
         <div class="card-title">Prévia da mensagem</div>
-        <div class="card-note">Formato do alerta que chega no aparelho</div>
+        <div class="card-note">Exemplo do alerta que chega no aparelho</div>
       </div></div>
       <div class="wa-preview">
         <div class="wa-bubble"><b>ALERTA DE PARIDADE — Enotel BR</b> [CRITICO]
 
 <b>Enotel Porto de Galinhas</b>
-Varredura de 31/08/2026 06:10
+Atualização de 31/08/2026 06:10
 <b>2</b> violações encontradas
 
 <b>[CRITICO] Booking.com</b>
-   Check-in 30/09 · 2 noites
-   Direto: R$ 1.240,00  →  Canal: R$ 1.078,00
+   Entrada 30/09 · 2 noites
+   Seu preço: R$ 1.240,00  →  Canal: R$ 1.078,00
    Diferença: -13,1% (R$ 162,00/noite)
 
 <b>[ATENCAO] Trip.com</b>
-   Check-in 30/10 · 2 noites
-   Direto: R$ 1.180,00  →  Canal: R$ 1.145,00
+   Entrada 30/10 · 2 noites
+   Seu preço: R$ 1.180,00  →  Canal: R$ 1.145,00
    Diferença: -3,0% (R$ 35,00/noite)
 
-<i>SerpAPI: 87/250 requisições usadas no mês</i></div>
+<i>Consultas de preço: 87/250 este mês</i></div>
       </div>
     </div>
     <div class="card" style="margin-top:16px">
@@ -913,7 +913,7 @@ async function renderWaConnection () {
   if (!status.configured) {
     host.innerHTML = `
       <div class="card-head"><div class="card-title">Conexão</div></div>
-      ${emptyState('info', 'Defina UAZAPI_URL e UAZAPI_ADMIN_TOKEN nas variáveis de ambiente do EasyPanel para habilitar o WhatsApp.')}`
+      ${emptyState('message-circle', 'Os avisos por WhatsApp ainda não estão disponíveis nesta conta. Em breve dá pra conectar o seu número por aqui.')}`
     return
   }
 
@@ -949,16 +949,16 @@ async function renderWaConnection () {
   host.innerHTML = `
     <div class="card-head">
       <div class="card-title">Conexão</div>
-      <span class="badge warning"><i data-lucide="zap" class="icon-sm"></i>${status.instance ? 'Desconectado' : 'Sem instância'}</span>
+      <span class="badge warning"><i data-lucide="zap" class="icon-sm"></i>${status.instance ? 'Desconectado' : 'Não conectado'}</span>
     </div>
     <p class="muted small" style="margin-bottom:16px">
       ${status.instance
         ? 'Gere o QR code e leia com o WhatsApp do celular em Aparelhos conectados.'
-        : 'Crie a instância na uazapi para começar.'}
+        : 'Vamos conectar o seu WhatsApp para começar.'}
     </p>
     <div id="qr-area"></div>
     <button class="btn block" id="wa-action" style="margin-top:14px">
-      ${status.instance ? 'Gerar QR code' : 'Criar instância'}
+      ${status.instance ? 'Gerar QR code' : 'Conectar WhatsApp'}
     </button>`
 
   document.getElementById('wa-action').addEventListener('click', async (ev) => {
@@ -967,7 +967,7 @@ async function renderWaConnection () {
     try {
       if (!status.instance) {
         await api.waInit('enotel-paridade')
-        toast('Instância criada', 'ok')
+        toast('Conexão iniciada', 'ok')
         return renderWaConnection()
       }
       const conn = await api.waConnect()
@@ -992,7 +992,7 @@ async function renderWaConnection () {
         area.innerHTML = `<div class="empty"><i data-lucide="hash" class="empty-icon"></i>
           Código de pareamento: <span class="strong mono" style="font-size:20px">${escapeHtml(conn.paircode)}</span></div>`
       } else {
-        area.innerHTML = emptyState('info', 'A uazapi não devolveu QR code. Tente novamente em instantes.')
+        area.innerHTML = emptyState('info', 'Não consegui gerar o QR code agora. Tente de novo em instantes.')
       }
     } catch (err) {
       toast(err.message, 'error')
@@ -1151,7 +1151,7 @@ async function pageSettings (main) {
     <div class="page-head">
       <div>
         <h1>Configurações</h1>
-        <p class="page-sub">Regras de paridade, alvos de varredura e orçamento de API</p>
+        <p class="page-sub">Regras de paridade, períodos monitorados e consultas de preço</p>
       </div>
     </div>
     <div id="settings-body">${loading('Carregando configurações...', 420)}</div>`
@@ -1166,8 +1166,8 @@ async function pageSettings (main) {
     <div class="card" style="margin-bottom:16px">
       <div class="card-head">
         <div>
-          <div class="card-title">Diagnóstico da integração</div>
-          <div class="card-note">Verifica chave, saldo real, alvos e última varredura</div>
+          <div class="card-title">Diagnóstico da coleta</div>
+          <div class="card-note">Confere a conexão, o saldo e a última atualização</div>
         </div>
         <div class="row" style="gap:8px">
           <button class="btn secondary" id="diag-run">Verificar</button>
@@ -1175,8 +1175,8 @@ async function pageSettings (main) {
         </div>
       </div>
       <div id="diag-out" class="muted small">
-        A verificação básica é gratuita. "Testar busca real" consome 1 requisição
-        e mostra exatamente quais anunciantes o Google Hotels devolveu.
+        A verificação básica é gratuita. "Testar busca real" usa 1 consulta
+        e mostra exatamente quais sites de venda apareceram.
       </div>
     </div>
 
@@ -1184,7 +1184,7 @@ async function pageSettings (main) {
       <div class="card">
         <div class="card-head"><div>
           <div class="card-title">Regras de paridade</div>
-          <div class="card-note">Ancoradas na tarifa do site oficial Enotel</div>
+          <div class="card-note">Comparadas com o seu preço oficial</div>
         </div></div>
         <div class="field">
           <label>Tolerância percentual — abaixo disso nada é reportado</label>
@@ -1195,7 +1195,7 @@ async function pageSettings (main) {
           <input class="input" type="number" step="0.5" id="tol-abs" value="${p.tolerance_abs}">
         </div>
         <div class="divider"></div>
-        <div class="card-note" style="margin-bottom:10px">Faixas de severidade (% de desconto da OTA)</div>
+        <div class="card-note" style="margin-bottom:10px">Faixas de severidade (% abaixo do seu preço)</div>
         <div class="row wrap" style="gap:10px">
           <div style="flex:1;min-width:100px">
             <label class="small muted">Atenção ≥</label>
@@ -1213,7 +1213,7 @@ async function pageSettings (main) {
         <div class="divider"></div>
         <div class="row between">
           <div>
-            <div class="strong">Reportar OTA acima do direto</div>
+            <div class="strong">Avisar quando um canal fica acima do seu preço</div>
             <div class="muted small">Não fere contrato, mas indica perda de conversão</div>
           </div>
           <label class="switch">
@@ -1260,8 +1260,8 @@ async function pageSettings (main) {
     <div class="card" style="margin-top:16px">
       <div class="card-head">
         <div>
-          <div class="card-title">Alvos de varredura e orçamento SerpAPI</div>
-          <div class="card-note">Cada alvo ativo consome 1 requisição por varredura</div>
+          <div class="card-title">Períodos monitorados e consultas de preço</div>
+          <div class="card-note">Cada período ativo usa 1 consulta por atualização</div>
         </div>
         <div class="badge ${budget.willExceed ? 'critical' : 'good'}">
           <i data-lucide="${budget.willExceed ? 'ban' : 'check'}" class="icon-sm"></i>
@@ -1275,33 +1275,33 @@ async function pageSettings (main) {
           <div class="meter ${budget.pctUsed >= 90 ? 'is-critical' : budget.pctUsed >= 70 ? 'is-warning' : ''}">
             <span style="width:${Math.min(100, budget.pctUsed)}%"></span></div>
         </div>
-        <div class="stat"><div class="stat-label">Por varredura</div>
+        <div class="stat"><div class="stat-label">Por atualização</div>
           <div class="stat-value">${budget.perScan}</div>
-          <div class="stat-meta">alvos ativos hoje</div></div>
+          <div class="stat-meta">períodos ativos hoje</div></div>
         <div class="stat"><div class="stat-label">Reserva manual</div>
           <div class="stat-value">${budget.reserve}</div>
           <div class="stat-meta">só disparos manuais podem usar</div></div>
-        <div class="stat"><div class="stat-label">Teto sustentável</div>
+        <div class="stat"><div class="stat-label">Limite saudável</div>
           <div class="stat-value">${budget.maxTargetsPerScan}</div>
-          <div class="stat-meta">alvos/varredura até o fim do mês</div></div>
+          <div class="stat-meta">períodos por atualização até o fim do mês</div></div>
       </div>
       ${props.map((prop) => `
         <div class="strong" style="margin-bottom:8px">${escapeHtml(prop.name)}
           <span class="muted small">· ${escapeHtml(prop.city || '')}</span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Alvo</th><th>Tipo</th><th>Período</th><th class="num">Noites</th>
+            <thead><tr><th>Período</th><th>Tipo</th><th>Datas</th><th class="num">Noites</th>
               <th class="num">Hóspedes</th><th>Ativo</th><th></th></tr></thead>
             <tbody>
               ${prop.targets.map((t) => `
                 <tr>
                   <td class="strong">${escapeHtml(t.label)}</td>
                   <td>${t.mode === 'fixed'
-                    ? `<span class="badge info"><i data-lucide="calendar-check" class="icon-sm"></i>Data fixa</span>${
+                    ? `<span class="badge info"><i data-lucide="calendar-check" class="icon-sm"></i>Data certa</span>${
                         t.auto_key
                           ? ' <span class="badge neutral"><i data-lucide="sparkles" class="icon-sm"></i>auto</span>'
                           : ''}`
-                    : '<span class="badge neutral"><i data-lucide="repeat" class="icon-sm"></i>Janela móvel</span>'}</td>
+                    : '<span class="badge neutral"><i data-lucide="repeat" class="icon-sm"></i>Sempre à frente</span>'}</td>
                   <td class="mono">${t.mode === 'fixed'
                     ? `${fmtDate(t.check_in)} <span class="muted">→</span> ${fmtDate(t.check_out)}`
                     : `hoje +${t.horizon_days} dias`}</td>
@@ -1345,18 +1345,18 @@ async function pageSettings (main) {
         <div class="row between" style="margin-bottom:12px">
           <div class="strong">Adicionar período manual</div>
           <div class="segmented" id="t-mode">
-            <button data-mode="fixed" class="active">Data fixa</button>
-            <button data-mode="rolling">Janela móvel</button>
+            <button data-mode="fixed" class="active">Data certa</button>
+            <button data-mode="rolling">Sempre à frente</button>
           </div>
         </div>
 
         <div id="t-form-fixed" class="date-picker">
           <div class="date-field">
-            <label><i data-lucide="calendar" class="icon-sm"></i>Check-in</label>
+            <label><i data-lucide="calendar" class="icon-sm"></i>Entrada</label>
             <input class="input" type="date" id="t-checkin" min="${TODAY}">
           </div>
           <div class="date-field">
-            <label><i data-lucide="calendar" class="icon-sm"></i>Check-out</label>
+            <label><i data-lucide="calendar" class="icon-sm"></i>Saída</label>
             <input class="input" type="date" id="t-checkout" min="${TODAY}">
           </div>
           <div class="date-field" style="max-width:140px">
@@ -1376,7 +1376,7 @@ async function pageSettings (main) {
         <div id="t-form-rolling" class="date-picker" hidden>
           <div class="date-field" style="flex:2">
             <label>Nome</label>
-            <input class="input" id="t-rlabel" placeholder="Ex.: Janela de 90 dias">
+            <input class="input" id="t-rlabel" placeholder="Ex.: Próximos 90 dias">
           </div>
           <div class="date-field" style="max-width:130px">
             <label>Daqui a (dias)</label>
@@ -1397,9 +1397,9 @@ async function pageSettings (main) {
         </div>
 
         <p class="muted small" id="t-hint" style="margin-top:10px">
-          Cada alvo ativo custa 1 requisição por varredura.
-          Com ${budget.daysLeft} dias restantes no mês, cabem até
-          <span class="strong">${budget.maxTargetsPerScan}</span> alvos por varredura.
+          Cada período ativo usa 1 consulta por atualização.
+          Cabem até
+          <span class="strong">${budget.maxTargetsPerScan}</span> períodos por atualização este mês.
         </p>`).join('')}
     </div>`
 
@@ -1421,12 +1421,12 @@ async function pageSettings (main) {
       ${d.probe ? `
         <div class="divider"></div>
         <div class="strong" style="color:var(--ink);margin-bottom:8px">
-          Anunciantes devolvidos pelo Google Hotels
+          Sites de venda que apareceram
           <span class="muted small">· ${escapeHtml(d.probe.propertyName || d.probe.query)}
-          · check-in ${fmtDate(d.probe.checkIn)}</span>
+          · entrada ${fmtDate(d.probe.checkIn)}</span>
         </div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Fonte (source)</th><th class="num">Diária</th><th>Canal monitorado</th></tr></thead>
+          <thead><tr><th>Site</th><th class="num">Diária</th><th>Canal monitorado</th></tr></thead>
           <tbody>${d.probe.offers.map((o) => `
             <tr>
               <td class="mono">${escapeHtml(o.source)}</td>
@@ -1437,7 +1437,7 @@ async function pageSettings (main) {
             </tr>`).join('')}</tbody>
         </table></div>
         ${d.probe.offers.every((o) => o.ignored)
-          ? '<div class="badge critical" style="margin-top:12px">Nenhuma fonte casou com os canais cadastrados — os padrões de nome precisam de ajuste</div>'
+          ? '<div class="badge critical" style="margin-top:12px">Nenhum site casou com os canais cadastrados — os padrões de nome precisam de ajuste</div>'
           : ''}` : ''}`
     refreshIcons(out)
   }
@@ -1489,7 +1489,7 @@ async function pageSettings (main) {
     sw.addEventListener('change', async () => {
       try {
         await api.toggleTarget(sw.dataset.target, sw.checked)
-        toast('Alvo atualizado — o orçamento muda a partir da próxima varredura', 'ok')
+        toast('Período atualizado — o consumo muda a partir da próxima atualização', 'ok')
       } catch (err) { toast(err.message, 'error') }
     }))
 
@@ -1501,8 +1501,8 @@ async function pageSettings (main) {
   document.getElementById('t-add')?.addEventListener('click', async (ev) => {
     const checkIn = document.getElementById('t-checkin').value
     const checkOut = document.getElementById('t-checkout').value
-    if (!checkIn || !checkOut) return toast('Escolha check-in e check-out', 'error')
-    if (checkOut <= checkIn) return toast('O check-out precisa ser depois do check-in', 'error')
+    if (!checkIn || !checkOut) return toast('Escolha as datas de entrada e saída', 'error')
+    if (checkOut <= checkIn) return toast('A saída precisa ser depois da entrada', 'error')
 
     busy(ev.currentTarget, true, '...')
     try {
@@ -1533,7 +1533,7 @@ async function pageSettings (main) {
         adults: Number(document.getElementById('t-radults').value),
         label: document.getElementById('t-rlabel').value.trim()
       })
-      toast('Janela móvel adicionada', 'ok')
+      toast('Período adicionado', 'ok')
       pageSettings(main)
     } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
   })
