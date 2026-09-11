@@ -319,10 +319,22 @@ BEGIN
   END IF;
 END $$;
 
--- whatsapp_recipients: UNIQUE(phone) -> UNIQUE(tenant_id, phone) fica p/ o
--- endurecimento coordenado com o Nucleo (a rota POST /whatsapp/recipients usa
--- ON CONFLICT (phone) + scopeTenant; troca junto). uazapi nao configurado -> nao
--- bloqueia o demo. Por ora mantem UNIQUE(phone) global.
+-- whatsapp_recipients: UNIQUE(phone) -> UNIQUE(tenant_id, phone). E SEGURANCA,
+-- nao cosmetico (Bastiao): com UNIQUE(phone) global + ON CONFLICT (phone), o
+-- tenant B podia dar POST de um phone que o tenant A ja tem -> o UPSERT casava a
+-- LINHA DO A e sobrescrevia name/jid (sequestro dos alertas do A p/ o jid do B
+-- quando o uazapi ligar) + RETURNING * devolvia a linha do A p/ o B. A rota
+-- POST /whatsapp/recipients (Nucleo) troca ON CONFLICT p/ (tenant_id, phone) no
+-- MESMO commit -- schema e rota sobem juntos.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'whatsapp_recipients_phone_key') THEN
+    ALTER TABLE whatsapp_recipients DROP CONSTRAINT whatsapp_recipients_phone_key;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'whatsapp_recipients_tenant_phone_key') THEN
+    ALTER TABLE whatsapp_recipients ADD CONSTRAINT whatsapp_recipients_tenant_phone_key UNIQUE (tenant_id, phone);
+  END IF;
+END $$;
 
 -- settings: PK(key) -> PK(tenant_id, key)
 DO $$

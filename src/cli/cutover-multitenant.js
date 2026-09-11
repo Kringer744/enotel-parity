@@ -12,11 +12,14 @@
 import { pool, withTransaction } from '../db/pool.js'
 
 // Tabelas cujo INSERT ja e all-explicit (scanner, migrate, provisioning,
-// autoTargets, reports/settings, notifier). notifications ENTRA: carrega o corpo
-// da notificacao por tenant (dado confidencial), fail-closed obrigatorio (Bastiao).
-// NAO inclui api_usage (cota da chave SerpAPI compartilhada) nem whatsapp_recipients
-// (UNIQUE(phone) global adiado): essas seguem com DEFAULT ate o §11.4.
-const TABLES = ['findings', 'rates', 'targets', 'scans', 'channels', 'subjects', 'settings', 'notifications']
+// autoTargets, reports/settings, notifier e o POST /whatsapp/recipients do Nucleo).
+// notifications e whatsapp_recipients ENTRAM: dados por tenant, fail-closed
+// obrigatorio (Bastiao). A UNICA tabela que mantem DEFAULT por DESENHO e api_usage:
+// cota da CHAVE SerpAPI COMPARTILHADA (recurso compartilhado, nao dado de tenant)
+// = §11.4. O gate de schema da Sentinela deve whitelistar api_usage como a excecao
+// documentada. Obs: o UNIQUE(phone)->(tenant_id,phone) de whatsapp_recipients segue
+// adiado (correcao, nao seguranca; troca junto do ON CONFLICT da rota do Nucleo).
+const TABLES = ['findings', 'rates', 'targets', 'scans', 'channels', 'subjects', 'settings', 'notifications', 'whatsapp_recipients']
 
 async function run () {
   // Seguranca: nenhuma linha pode estar com tenant_id NULL (backfill incompleto).

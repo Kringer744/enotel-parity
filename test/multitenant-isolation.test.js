@@ -124,24 +124,29 @@ test('#F2 convite ACCEPT: uso unico e atomico — 2o aceite do mesmo token falha
   }
 })
 
-test('#F2 gate de schema pos-cutover: tenant_id SEM DEFAULT + uniques/PKs compostas por tenant', { skip }, async () => {
-  // (a) NENHUMA coluna tenant_id pode ter DEFAULT: senao "esquecer" o tenant num
-  // INSERT nao falha -- o default mascara o bug de escopo.
+test('#F2 gate de schema pos-cutover: tenant_id SEM DEFAULT (all-except api_usage) + uniques compostas', { skip }, async () => {
+  // (a) tenant_id SEM DEFAULT (senao "esquecer" o tenant num INSERT nao falha --
+  // o DEFAULT mascara o bug de escopo). Cutover final do Cortex = 9 tabelas
+  // (findings/rates/targets/scans/channels/subjects/settings/notifications/whatsapp_recipients).
+  // FAIL-CLOSED "all-except api_usage": a UNICA excecao por desenho e `api_usage`
+  // (cota da chave SerpAPI COMPARTILHADA = global, §11.4; nao e dado de tenant).
+  // Qualquer OUTRA tabela com tenant_id DEFAULT reprova -- inclusive tabela nova.
   const { rows: defs } = await pool.query(
     `SELECT c.relname AS tbl
        FROM pg_attribute a
        JOIN pg_class c ON c.oid = a.attrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
        JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-      WHERE n.nspname='public' AND a.attname='tenant_id' AND c.relkind='r'`)
-  assert.equal(defs.length, 0, `tenant_id nao pode ter DEFAULT em: ${defs.map((r) => r.tbl).join(', ') || '(nenhuma)'}`)
+      WHERE n.nspname='public' AND a.attname='tenant_id' AND c.relkind='r'
+        AND c.relname <> 'api_usage'`)
+  assert.equal(defs.length, 0, `tenant_id NAO pode ter DEFAULT (exceto api_usage): ${defs.map((r) => r.tbl).join(', ') || '(nenhuma)'}`)
 
-  // (b) uniques/PKs compostas por tenant existem (set de colunas EXATO).
+  // (b) uniques compostas por chave natural do tenant (tabelas do cutover com
+  // chave natural). api_usage fica de fora (global, sem composta por tenant em F1).
   const composite = [
     ['channels', ['tenant_id', 'slug']],
-    ['whatsapp_recipients', ['tenant_id', 'phone']],
-    ['api_usage', ['tenant_id', 'connector_key', 'month']],
-    ['settings', ['tenant_id', 'key']]
+    ['settings', ['tenant_id', 'key']],
+    ['whatsapp_recipients', ['tenant_id', 'phone']]
   ]
   for (const [tbl, cols] of composite) {
     const want = [...cols].sort()

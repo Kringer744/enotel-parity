@@ -668,9 +668,13 @@ router.post('/whatsapp/recipients', requireRole('tenant_admin'), requireTenantCo
     return res.status(400).json({ error: 'Informe nome e telefone (ou jid do grupo)' })
   }
   const { rows } = await query(
+    // ON CONFLICT (tenant_id, phone): a unique composta impede que o tenant B
+    // "casse" a linha de A ao reenviar um phone de A (antes, UNIQUE(phone) global
+    // + upsert sequestrava a linha do A). Bastiao/Cortex — sobe no mesmo commit
+    // da unique composta em schema.sql.
     `INSERT INTO whatsapp_recipients (tenant_id, name, phone, jid, is_group)
      VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (phone) DO UPDATE SET name = EXCLUDED.name, jid = EXCLUDED.jid, active = TRUE
+     ON CONFLICT (tenant_id, phone) DO UPDATE SET name = EXCLUDED.name, jid = EXCLUDED.jid, active = TRUE
      RETURNING *`,
     [req.tenantId, name, digits || jid, jid || null, Boolean(is_group)]
   )

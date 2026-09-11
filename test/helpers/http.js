@@ -97,6 +97,14 @@ export async function seedChannelMarker (pool, tenantId, marker) {
   )
 }
 
+/** Marcador em `notifications` (GET /whatsapp/notifications) — o corpo carrega os achados do tenant. */
+export async function seedNotificationMarker (pool, tenantId, body) {
+  await pool.query(
+    'INSERT INTO notifications (tenant_id, phone, body) VALUES ($1,$2,$3)',
+    [tenantId, `55${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(0, 13), body]
+  )
+}
+
 /** ON DELETE CASCADE em tenants limpa todos os filhos seedados. */
 export async function cleanupTenants (pool, slugs) {
   await pool.query('DELETE FROM tenants WHERE slug = ANY($1)', [slugs])
