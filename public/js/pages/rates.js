@@ -1,79 +1,9 @@
 import { api } from '../api.js'
-import { loading, emptyState, escapeHtml, fmtDate, pct, toast, busy, refreshIcons } from '../ui.js'
+import { loading, emptyState, escapeHtml, fmtDate, pct, refreshIcons } from '../ui.js'
 import { money2 } from '../charts.js'
-import { TODAY } from '../core/state.js'
-import { waitForScan } from '../components/scan.js'
+import { renderPeriodSelector } from '../components/period-selector.js'
 
 /* ═══ Tarifas atuais ══════════════════════════════════════════════════════ */
-
-/**
- * Liga o seletor de período fixo do topo de "Tarifas atuais".
- * "Só monitorar" cadastra e espera a próxima varredura; "Puxar agora" cadastra
- * e dispara a varredura na hora, que é o caminho que gasta requisição.
- */
-function wireFixedPeriod (main) {
-  const checkIn = document.getElementById('r-checkin')
-  const checkOut = document.getElementById('r-checkout')
-  const hint = document.getElementById('r-hint')
-
-  api.budget().then((b) => {
-    hint.textContent =
-      `Ver agora usa ${b.perScan + 1} consultas de preço (todos os períodos ativos mais este). ` +
-      `Restam ${b.remaining} de ${b.limit} este mês.`
-  }).catch(() => { hint.textContent = '' })
-
-  // O check-out nunca pode ser anterior ou igual ao check-in.
-  checkIn.addEventListener('change', () => {
-    const min = new Date(`${checkIn.value}T12:00:00Z`)
-    min.setUTCDate(min.getUTCDate() + 1)
-    checkOut.min = min.toISOString().slice(0, 10)
-    if (!checkOut.value || checkOut.value <= checkIn.value) checkOut.value = checkOut.min
-  })
-
-  const create = async () => {
-    if (!checkIn.value || !checkOut.value) throw new Error('Escolha as datas de entrada e saída')
-    if (checkOut.value <= checkIn.value) throw new Error('A saída precisa ser depois da entrada')
-    const props = await api.properties()
-    const prop = props.find((p) => p.active) || props[0]
-    if (!prop) throw new Error('Nenhuma propriedade cadastrada')
-    return api.createTarget({
-      property_id: prop.id,
-      mode: 'fixed',
-      check_in: checkIn.value,
-      check_out: checkOut.value,
-      adults: Number(document.getElementById('r-adults').value)
-    })
-  }
-
-  document.getElementById('r-add').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, 'Salvando...')
-    try {
-      await create()
-      toast('Período adicionado. Entra na próxima atualização.', 'ok')
-    } catch (err) { toast(err.message, 'error') }
-    busy(ev.currentTarget, false)
-  })
-
-  document.getElementById('r-pull').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, 'Atualizando...')
-    try {
-      await create()
-      await api.runScan()
-      document.getElementById('rates').innerHTML =
-        loading('Buscando os preços do período escolhido...', 320)
-      const scan = await waitForScan()
-      if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
-        toast(`${scan.rates_captured} preços coletados`, 'ok')
-      } else if (scan) {
-        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
-      }
-      return pageRates(main)
-    } catch (err) {
-      toast(err.message, 'error')
-      busy(ev.currentTarget, false)
-    }
-  })
-}
 
 export async function pageRates (main) {
   main.innerHTML = `
@@ -89,36 +19,21 @@ export async function pageRates (main) {
         <div>
           <div class="card-title">Ver um período específico</div>
           <div class="card-note">
-            Escolha as datas da estadia. O período passa a ser acompanhado
-            diariamente até a data chegar, e depois sai sozinho.
+            Escolha a estadia no calendário. "Ver agora" mostra os preços na hora;
+            "Passar a acompanhar" monitora todo dia até a data chegar.
           </div>
         </div>
       </div>
-      <div class="date-picker">
-        <div class="date-field">
-          <label><i data-lucide="calendar" class="icon-sm"></i>Entrada</label>
-          <input class="input" type="date" id="r-checkin" min="${TODAY}">
-        </div>
-        <div class="date-field">
-          <label><i data-lucide="calendar-check" class="icon-sm"></i>Saída</label>
-          <input class="input" type="date" id="r-checkout" min="${TODAY}">
-        </div>
-        <div class="date-field" style="max-width:130px">
-          <label><i data-lucide="users" class="icon-sm"></i>Hóspedes</label>
-          <select class="select" id="r-adults">
-            ${[1, 2, 3, 4, 5, 6].map((n) =>
-              `<option value="${n}" ${n === 2 ? 'selected' : ''}>${n}</option>`).join('')}
-          </select>
-        </div>
-        <button class="btn secondary" id="r-add">Só acompanhar</button>
-        <button class="btn" id="r-pull">Ver agora</button>
-      </div>
-      <p class="muted small" id="r-hint" style="margin-top:10px"></p>
+      <div class="ps-inline" id="rates-selector"></div>
     </div>
 
     <div id="rates">${loading('Carregando os preços da última atualização...', 320)}</div>`
 
-  wireFixedPeriod(main)
+  renderPeriodSelector(document.getElementById('rates-selector'), {
+    onCreated: () => pageRates(main),
+    onScanStart: () => { document.getElementById('rates').innerHTML = loading('Buscando os preços do período escolhido...', 320) },
+    onScanned: () => pageRates(main)
+  })
 
   const groups = await api.currentRates()
   const host = document.getElementById('rates')

@@ -482,19 +482,12 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.badge.good     { background: var(--good-wash);     color: #0a7a0a; }
-.badge.warning  { background: var(--warning-wash);  color: #8a6100; }
-.badge.serious  { background: var(--serious-wash);  color: #b4501f; }
-.badge.critical { background: var(--critical-wash); color: #b02525; }
+.badge.good     { background: var(--good-wash);     color: var(--on-good); }
+.badge.warning  { background: var(--warning-wash);  color: var(--on-warning); }
+.badge.serious  { background: var(--serious-wash);  color: var(--on-serious); }
+.badge.critical { background: var(--critical-wash); color: var(--on-critical); }
 .badge.info     { background: var(--accent-wash);   color: var(--accent); }
 .badge.neutral  { background: var(--surface-sunken); color: var(--ink-2); }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .badge.good     { color: #4ade4a; }
-  :root:not([data-theme="light"]) .badge.warning  { color: #fac83f; }
-  :root:not([data-theme="light"]) .badge.serious  { color: #f0a37f; }
-  :root:not([data-theme="light"]) .badge.critical { color: #f07070; }
-}
 
 /* ─── Tabelas ───────────────────────────────────────────────────────────── */
 

@@ -1,71 +1,33 @@
 import { api } from '../api.js'
 import { fmtDate, fmtRelative, pct, escapeHtml, toast, busy, skeleton, loading, refreshIcons } from '../ui.js'
 import { lineChart, money2 } from '../charts.js'
-import { state, TODAY, navigate, refreshNav } from '../core/state.js'
+import { state, navigate, refreshNav } from '../core/state.js'
 import { periodPicker, wirePeriod } from '../components/period.js'
 import { waitForScan } from '../components/scan.js'
 import { renderRanking } from '../components/ranking.js'
 import { findingsTable, wireFindingRows } from '../components/findings-table.js'
+import { renderPeriodSelector } from '../components/period-selector.js'
 
 /* ═══ Painel ══════════════════════════════════════════════════════════════ */
 
-/**
- * Controles de data do cabecalho do Painel.
- * "Monitorar" so cadastra o periodo e espera a varredura agendada; "Puxar"
- * cadastra e varre na hora -- e esse o caminho que gasta requisicao.
- */
-function wireHeadDates (main) {
-  const ci = document.getElementById('h-checkin')
-  const co = document.getElementById('h-checkout')
-
-  // O check-out acompanha o check-in e nunca pode ser anterior a ele.
-  ci.addEventListener('change', () => {
-    const min = new Date(`${ci.value}T12:00:00Z`)
-    min.setUTCDate(min.getUTCDate() + 1)
-    co.min = min.toISOString().slice(0, 10)
-    if (!co.value || co.value <= ci.value) co.value = co.min
-  })
-
-  const create = async () => {
-    if (!ci.value || !co.value) throw new Error('Escolha as datas de entrada e saída')
-    if (co.value <= ci.value) throw new Error('A saída precisa ser depois da entrada')
-    const props = await api.properties()
-    const prop = props.find((p) => p.active) || props[0]
-    if (!prop) throw new Error('Nenhuma propriedade cadastrada')
-    return api.createTarget({
-      property_id: prop.id,
-      mode: 'fixed',
-      check_in: ci.value,
-      check_out: co.value,
-      adults: 2
-    })
-  }
-
-  document.getElementById('h-add').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, '...')
-    try {
-      await create()
-      toast('Período adicionado. Entra na próxima atualização.', 'ok')
-      await renderPeriodChips()
-    } catch (err) { toast(err.message, 'error') }
-    busy(ev.currentTarget, false)
-  })
-
-  document.getElementById('h-pull').addEventListener('click', async (ev) => {
-    busy(ev.currentTarget, true, 'Atualizando...')
-    try {
-      await create()
-      await api.runScan()
-      document.getElementById('ranking').innerHTML =
-        loading('Buscando os preços do período escolhido...', 260)
-      const scan = await waitForScan()
-      if (scan && (scan.status === 'ok' || scan.status === 'partial')) {
-        toast(`${scan.rates_captured} preços coletados`, 'ok')
-      } else if (scan) {
-        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
-      }
-      return pageDashboard(main)
-    } catch (err) { toast(err.message, 'error'); busy(ev.currentTarget, false) }
+/** Abre o seletor de período (F2) como um modal centralizado. */
+function openPeriodModal (main) {
+  const overlay = document.createElement('div')
+  overlay.className = 'ps-overlay'
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onEsc) }
+  const onEsc = (e) => { if (e.key === 'Escape') close() }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  document.addEventListener('keydown', onEsc)
+  document.body.appendChild(overlay)
+  renderPeriodSelector(overlay, {
+    onClose: close,
+    onCreated: () => { close(); renderPeriodChips() },
+    onScanStart: () => {
+      close()
+      document.getElementById('ranking').innerHTML = loading('Buscando os preços do período escolhido...', 260)
+      document.getElementById('recent').innerHTML = loading('Isso leva de 10 a 40 segundos...', 200)
+    },
+    onScanned: () => { if (state.page === 'dashboard') pageDashboard(main) }
   })
 }
 
@@ -81,8 +43,8 @@ async function renderPeriodChips () {
 
   if (fixed.length === 0) {
     host.innerHTML =
-      '<span class="muted small">Nenhum período específico monitorado. ' +
-      'Escolha as datas acima para adicionar.</span>'
+      '<span class="muted small">Nenhum período específico no acompanhamento. ' +
+      'Use "Escolher período" para adicionar um.</span>'
     return
   }
 
@@ -118,19 +80,14 @@ export async function pageDashboard (main) {
       </div>
       <div class="row wrap" style="gap:10px">
         ${periodPicker()}
-        <div class="head-dates">
-          <i data-lucide="calendar" class="icon-sm"></i>
-          <input type="date" id="h-checkin" min="${TODAY}" title="Entrada">
-          <span class="sep">até</span>
-          <input type="date" id="h-checkout" min="${TODAY}" title="Saída">
-          <button class="btn ghost small" id="h-add">Acompanhar</button>
-          <button class="btn small" id="h-pull">Ver agora</button>
-        </div>
-        <button class="btn secondary" id="run-scan">Atualizar agora</button>
+        <button class="btn secondary" id="pick-period">
+          <i data-lucide="calendar-plus" class="icon-sm"></i>Escolher período
+        </button>
+        <button class="btn" id="run-scan">Atualizar agora</button>
       </div>
     </div>
     <div id="period-chips" class="period-chips"></div>
-    <div class="grid kpi" id="kpis">${[1, 2, 3, 4].map(() => skeleton(110)).join('')}</div>
+    <div class="grid kpi" id="kpis">${[1, 2, 3].map(() => skeleton(110)).join('')}</div>
     <div class="grid two" style="margin-top:16px">
       <div class="card">
         <div class="card-head">
@@ -163,11 +120,12 @@ export async function pageDashboard (main) {
         </button>
       </div>
       <div id="recent">${loading('Buscando violações...', 200)}</div>
-    </div>`
+    </div>
+    <div id="budget-strip" style="margin-top:16px"></div>`
 
   wirePeriod(() => pageDashboard(main))
-  wireHeadDates(main)
   renderPeriodChips()
+  document.getElementById('pick-period').addEventListener('click', () => openPeriodModal(main))
   document.getElementById('see-all').addEventListener('click', () => navigate('findings'))
 
   document.getElementById('run-scan').addEventListener('click', async (ev) => {
@@ -232,30 +190,19 @@ export async function pageDashboard (main) {
           ? `${escapeHtml(ov.worstGap.channel_name)} · ${money2(ov.worstGap.channel_price)} vs ${money2(ov.worstGap.base_price)}`
           : 'Nenhuma violação no período'}
       </div>
-    </div>
-    <div class="card stat">
-      <div class="stat-label">
-        Consultas de preço · ${b.month}
-        ${b.live
-          ? '<span class="badge good"><i data-lucide="wifi" class="icon-sm"></i>em dia</span>'
-          : '<span class="badge warning"><i data-lucide="wifi-off" class="icon-sm"></i>estimado</span>'}
-      </div>
-      <div class="stat-value">${b.used}<span style="font-size:18px;color:var(--ink-3)"> / ${b.limit}</span></div>
-      <div class="stat-meta">
-        ${b.live
-          ? `${b.remaining} restantes este mês`
-          : `Não consegui conferir o saldo agora${b.liveError ? `: ${escapeHtml(b.liveError)}` : ''}`}
-      </div>
-      <div class="stat-meta">
-        ${b.willExceed
-          ? `No ritmo atual chega a ${b.projected} até o fim do mês`
-          : `${b.perScan} consultas por atualização · renova todo mês`}
-      </div>
-      <div class="meter ${budgetTone}"><span style="width:${Math.min(100, b.pctUsed)}%"></span></div>
-      <button class="btn ghost small" id="sync-budget" style="margin-top:8px;padding-left:0">
-        Conferir o saldo
-      </button>
     </div>`
+
+  document.getElementById('budget-strip').innerHTML = `
+    <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 18px">
+      <i data-lucide="gauge" class="icon-sm" style="color:var(--ink-3)"></i>
+      <div class="small">
+        <span class="strong">Consultas de preço</span> · ${b.used} de ${b.limit} este mês ·
+        ${b.willExceed ? `no ritmo atual chega a ${b.projected}` : `${b.perScan} por atualização · renova todo mês`}
+      </div>
+      <div class="meter ${budgetTone}" style="flex:1;min-width:120px;max-width:260px;margin:0"><span style="width:${Math.min(100, b.pctUsed)}%"></span></div>
+      <button class="btn ghost small" id="sync-budget">Conferir o saldo</button>
+    </div>`
+  refreshIcons(document.getElementById('budget-strip'))
 
   document.getElementById('sync-budget').addEventListener('click', async (ev) => {
     busy(ev.currentTarget, true, 'Sincronizando…')

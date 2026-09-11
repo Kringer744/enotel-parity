@@ -7,6 +7,8 @@
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <title>Paridade Enotel — Demo</title>
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/period-selector.css">
+  <link rel="stylesheet" href="/css/onboarding.css">
   <!-- Anti-flash: aplica o tema salvo antes do primeiro paint (mesma chave do theme.js). -->
   <script>try{var m=localStorage.getItem('paridade.theme');if(m==='light'||m==='dark')document.documentElement.setAttribute('data-theme',m)}catch(e){}</script>
   <script src="https://unpkg.com/lucide@latest"></script>
@@ -36,6 +38,13 @@
     import { installDemo } from '/js/core/demo-fixtures.js'
     installDemo(api)          // troca os metodos de leitura por fixtures da Enotel
     setToken('demo-token')    // pula o login (boot ve o token + api.me mockado)
+    // White-label: 3 marcas pro switch da sidebar demonstrar o multi-tenant.
+    window.__TENANTS__ = [
+      { id: 'enotel', name: 'Paridade', sub: 'Enotel BR', mark: 'E', accent: '#0071e3', title: 'Paridade Enotel' },
+      { id: 'fluxo', name: 'Fluxo Paridade', sub: 'Plataforma', mark: 'F', accent: '#0f9d58', title: 'Fluxo Paridade' },
+      { id: 'acme', name: 'Acme Rates', sub: 'Hotéis', mark: 'A', accent: '#d9480f', title: 'Acme Rates' }
+    ]
+    window.__TENANT__ = window.__TENANTS__[0]
     await import('/js/app.js')// dinamico: boot() roda DEPOIS do installDemo
   </script>
 </body>

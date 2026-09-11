@@ -10,7 +10,7 @@ import { state, navigate } from '../core/state.js'
 
 export function findingsTable (findings) {
   if (findings.length === 0) {
-    return emptyState('info', 'Nenhuma violação de paridade no período. Todos os canais em conformidade.')
+    return emptyState('check-circle', 'Tudo em paridade — nenhum canal ficou abaixo do seu preço no período.')
   }
   return `
     <div class="table-wrap">

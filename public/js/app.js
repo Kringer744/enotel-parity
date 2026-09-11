@@ -3,6 +3,8 @@ import { escapeHtml, busy, refreshIcons, emptyState } from './ui.js'
 import { state } from './core/state.js'
 import { initTheme, setTheme, getTheme, onThemeChange } from './theme.js'
 import { repaintCharts } from './charts.js'
+import { applyBranding } from './core/branding.js'
+import { renderOnboarding } from './components/onboarding.js'
 import { pageDashboard } from './pages/dashboard.js'
 import { pageRates } from './pages/rates.js'
 import { pageFindings } from './pages/findings.js'
@@ -82,6 +84,7 @@ function renderApp () {
         <div class="nav-label">Monitoramento</div>
         <nav id="nav"></nav>
         <div class="sidebar-foot">
+          <div id="wl-switch"></div>
           <div class="theme-toggle segmented" id="theme-toggle" role="group" aria-label="Tema">
             <button type="button" data-mode="light" aria-label="Tema claro" title="Claro"><i data-lucide="sun" class="icon-sm"></i></button>
             <button type="button" data-mode="dark" aria-label="Tema escuro" title="Escuro"><i data-lucide="moon" class="icon-sm"></i></button>
@@ -106,6 +109,8 @@ function renderApp () {
   document.getElementById('theme-toggle').querySelectorAll('button').forEach((b) =>
     b.addEventListener('click', () => setTheme(b.dataset.mode)))
   markThemeActive()
+  applyBranding(window.__TENANT__)
+  renderWhiteLabelSwitch()
   go(state.page)
 }
 
@@ -115,6 +120,41 @@ function markThemeActive () {
   if (!tg) return
   const mode = getTheme()
   tg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode))
+}
+
+/** Switch de white-label do demo — só aparece quando window.__TENANTS__ existe. */
+function renderWhiteLabelSwitch () {
+  const host = document.getElementById('wl-switch')
+  if (!host || !Array.isArray(window.__TENANTS__)) return
+  const current = window.__TENANT__ || window.__TENANTS__[0]
+  host.innerHTML = `
+    <div class="nav-label" style="padding:0 0 6px">Marca (demo)</div>
+    <select class="select" id="wl-select" aria-label="Trocar a marca do tenant" style="margin-bottom:14px">
+      ${window.__TENANTS__.map((t) => `<option value="${escapeHtml(t.id)}"${current.id === t.id ? ' selected' : ''}>${escapeHtml(t.name)}${t.sub ? ' · ' + escapeHtml(t.sub) : ''}</option>`).join('')}
+    </select>
+    <button type="button" class="btn ghost small" id="ob-open" style="padding-left:0"><i data-lucide="sparkles" class="icon-sm"></i>Ver onboarding</button>`
+  document.getElementById('wl-select').addEventListener('change', (e) => {
+    const t = window.__TENANTS__.find((x) => x.id === e.target.value) || window.__TENANTS__[0]
+    window.__TENANT__ = t
+    applyBranding(t)
+  })
+  document.getElementById('ob-open').addEventListener('click', () => openOnboarding())
+  refreshIcons(host)
+}
+
+/** Abre o onboarding guiado (demo) como overlay centralizado. */
+function openOnboarding () {
+  const overlay = document.createElement('div')
+  overlay.className = 'ps-overlay'
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onEsc) }
+  const onEsc = (e) => { if (e.key === 'Escape') close() }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  document.addEventListener('keydown', onEsc)
+  document.body.appendChild(overlay)
+  renderOnboarding(overlay, {
+    onClose: close,
+    onDone: () => { close(); go('dashboard') }
+  })
 }
 
 function renderNav () {
@@ -179,5 +219,6 @@ async function boot () {
 }
 
 initTheme()
+applyBranding(window.__TENANT__)
 boot()
 
