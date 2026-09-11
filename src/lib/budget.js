@@ -174,8 +174,8 @@ export async function forecast () {
 
   const { rows } = await query(
     `SELECT COUNT(*)::int AS targets
-     FROM scan_targets t
-     JOIN properties p ON p.id = t.property_id
+     FROM targets t
+     JOIN subjects p ON p.id = t.property_id
      WHERE t.active AND p.active`
   )
   const perScan = rows[0]?.targets ?? 0

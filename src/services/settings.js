@@ -36,8 +36,13 @@ function deepMerge (base, override) {
   return out
 }
 
-export async function getSettings () {
-  const { rows } = await query('SELECT key, value FROM settings')
+// Escopo por tenant: settings sao POR tenant (PK composta (tenant_id, key)).
+// `tenantId` e opcional e cai no tenant #1 (Enotel) por padrao -- transicao
+// segura enquanto os callers globais (notifier/scanner/autoTargets/uazapi) ainda
+// nao passam o tenant. NUNCA le sem filtro de tenant: um tenant jamais enxerga
+// as settings de outro. Quem armazena por tenant sao os writes escopados abaixo.
+export async function getSettings (tenantId = 1) {
+  const { rows } = await query('SELECT key, value FROM settings WHERE tenant_id = $1', [tenantId])
   const stored = Object.fromEntries(rows.map((r) => [r.key, r.value]))
   const out = {}
   for (const [key, def] of Object.entries(DEFAULTS)) {
@@ -46,20 +51,20 @@ export async function getSettings () {
   return out
 }
 
-export async function getSetting (key) {
-  const all = await getSettings()
+export async function getSetting (key, tenantId = 1) {
+  const all = await getSettings(tenantId)
   return all[key]
 }
 
 /** Grava mesclando com o que ja existe: um PATCH parcial nunca zera o resto. */
-export async function updateSetting (key, patch) {
+export async function updateSetting (key, patch, tenantId = 1) {
   if (!(key in DEFAULTS)) throw new Error(`Chave de configuracao desconhecida: ${key}`)
-  const current = await getSetting(key)
+  const current = await getSetting(key, tenantId)
   const merged = deepMerge(current, patch)
   await query(
-    `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [key, JSON.stringify(merged)]
+    `INSERT INTO settings (key, value, tenant_id, updated_at) VALUES ($1, $2, $3, now())
+     ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [key, JSON.stringify(merged), tenantId]
   )
   return merged
 }

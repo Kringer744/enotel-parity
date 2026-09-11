@@ -1,5 +1,11 @@
-# Uso local / VPS avulsa. No EasyPanel os serviços são criados pelo painel
-# (ou pelo scripts/easypanel-deploy.js) e este arquivo não é necessário.
+# Uso local / VPS avulsa. No EasyPanel os servicos sao criados pelo painel
+# (ou pelo scripts/easypanel-deploy.js) e este arquivo nao e necessario.
+#
+# REPLICA UNICA: suba SEMPRE com 1 container do `app`. NUNCA use
+# `docker compose up --scale app=N` (>1): o cron (node-cron) dispararia em
+# paralelo em cada replica e cada uma gastaria o orcamento SerpAPI por conta
+# propria. A guarda de orcamento impede estourar o teto, mas haveria varreduras
+# duplicadas. Se um dia for para Swarm, fixar `deploy: { replicas: 1 }`.
 services:
   db:
     image: postgres:16-alpine
@@ -19,6 +25,8 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # A imagem ja usa tini como ENTRYPOINT (init/PID 1). `init: true` aqui seria
+    # redundante e geraria aviso de tini nao-PID-1; deixado a cargo da imagem.
     depends_on:
       db:
         condition: service_healthy
@@ -30,12 +38,41 @@ services:
       JWT_SECRET: ${JWT_SECRET:-troque-em-producao}
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_NAME: ${ADMIN_NAME:-Administrador}
       SERPAPI_KEY: ${SERPAPI_KEY}
       SERPAPI_MONTHLY_LIMIT: ${SERPAPI_MONTHLY_LIMIT:-250}
+      SERPAPI_RESERVE: ${SERPAPI_RESERVE:-25}
       UAZAPI_URL: ${UAZAPI_URL:-}
       UAZAPI_ADMIN_TOKEN: ${UAZAPI_ADMIN_TOKEN:-}
+      UAZAPI_INSTANCE_TOKEN: ${UAZAPI_INSTANCE_TOKEN:-}
       SCAN_CRON: ${SCAN_CRON:-10 6 * * *}
       SCAN_TIMEZONE: America/Recife
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+
+  # Postgres de TESTE local, efemero e descartavel. Profile "test" -> NAO sobe
+  # no `docker compose up` normal. Exposto so em 127.0.0.1:5433. Uso:
+  #   docker compose --profile test up -d db-test
+  #   export TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5433/parity_test?sslmode=disable'
+  #   DATABASE_URL="$TEST_DATABASE_URL" JWT_SECRET=dev PGSSLMODE=disable NODE_ENV=test npm run migrate
+  #   npm test
+  #   docker compose --profile test down   # descarta (tmpfs -> zero persistencia)
+  # SEGURANCA: banco de TESTE descartavel; TEST_DATABASE_URL NUNCA aponta pra producao (servidor 3).
+  db-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: parity_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d parity_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   pgdata:

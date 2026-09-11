@@ -1,5 +1,7 @@
 import { query } from '../db/pool.js'
-import * as serp from './serpapi.js'
+import * as serp from './serpapi.js' // ainda usado por resolveDates (datesForHorizon)
+import { config } from '../config.js'
+import { connectorForVertical } from './connectors/index.js'
 import * as parity from './parity.js'
 import * as budget from '../lib/budget.js'
 import { getSettings } from './settings.js'
@@ -12,19 +14,23 @@ export function isRunning () {
   return running
 }
 
-async function loadChannels () {
-  const { rows } = await query('SELECT * FROM channels WHERE active ORDER BY sort_order')
+async function loadChannels (tenantId) {
+  const { rows } = await query(
+    'SELECT * FROM channels WHERE tenant_id = $1 AND active ORDER BY sort_order',
+    [tenantId]
+  )
   return rows
 }
 
-async function loadTargets () {
+async function loadTargets (tenantId) {
   const { rows } = await query(
-    `SELECT t.*, p.name AS property_name, p.serp_query, p.serp_property_token,
-            p.currency, p.id AS property_id
-     FROM scan_targets t
-     JOIN properties p ON p.id = t.property_id
-     WHERE t.active AND p.active
-     ORDER BY p.id, COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
+    `SELECT t.*, s.name AS property_name, s.serp_query, s.serp_property_token,
+            s.currency, s.vertical, s.id AS property_id
+     FROM targets t
+     JOIN subjects s ON s.id = t.property_id
+     WHERE t.active AND s.active AND t.tenant_id = $1
+     ORDER BY s.id, COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`,
+    [tenantId]
   )
   return rows
 }
@@ -53,11 +59,12 @@ function resolveDates (target) {
  * Alvos de data fixa viram lixo depois que o check-in passa: continuariam
  * gastando requisicoes para consultar uma estadia que ja aconteceu.
  */
-async function expirePastTargets () {
+async function expirePastTargets (tenantId) {
   const { rows } = await query(
-    `UPDATE scan_targets SET active = FALSE
-     WHERE active AND mode = 'fixed' AND check_in < CURRENT_DATE
-     RETURNING label`
+    `UPDATE targets SET active = FALSE
+     WHERE active AND mode = 'fixed' AND check_in < CURRENT_DATE AND tenant_id = $1
+     RETURNING label`,
+    [tenantId]
   )
   if (rows.length > 0) {
     console.log(`[scan] ${rows.length} alvo(s) de data fixa expiraram: ${rows.map((r) => r.label).join(', ')}`)
@@ -65,37 +72,52 @@ async function expirePastTargets () {
   return rows.map((r) => r.label)
 }
 
-/** Garante o property_token em cache; custa 1 requisicao apenas na primeira vez. */
-async function ensureToken (target, dates, opts) {
-  if (target.serp_property_token) return { token: target.serp_property_token, spent: 0 }
-
-  const found = await serp.findPropertyToken(target.serp_query, {
-    checkIn: dates.checkIn,
-    checkOut: dates.checkOut,
-    adults: target.adults
-  }, opts)
-
-  await query('UPDATE properties SET serp_property_token = $1 WHERE id = $2', [
-    found.token,
-    target.property_id
-  ])
-  return { token: found.token, spent: 1 }
+/**
+ * Monta o ctx injetado no conector. F1: credenciais do config + guarda de orcamento
+ * global (respeita o teto SerpAPI de 250/mes via budget.consume dentro do conector).
+ * §11.4: troca por credenciais/limite de tenant_connectors -- sem tocar no conector.
+ */
+function buildCtx (target, opts) {
+  return {
+    credentials: { apiKey: config.serpapi.key, endpoint: config.serpapi.endpoint },
+    budget,
+    currency: target.currency || 'BRL',
+    allowReserve: Boolean(opts?.allowReserve)
+  }
 }
 
-async function processTarget (scanId, target, channels, settings, opts) {
+/**
+ * Garante o handle (property_token) em cache; custa 1 requisicao apenas na primeira
+ * vez. `discover` NAO persiste -- a gravacao do handle no subject e feita aqui.
+ */
+async function ensureToken (tenantId, target, dates, opts) {
+  if (target.serp_property_token) return { token: target.serp_property_token, spent: 0 }
+
+  const connector = connectorForVertical(target.vertical || 'hotel')
+  const { handle } = await connector.discover(target, buildCtx(target, opts))
+
+  await query('UPDATE subjects SET serp_property_token = $1 WHERE id = $2 AND tenant_id = $3', [
+    handle,
+    target.property_id,
+    tenantId
+  ])
+  return { token: handle, spent: 1 }
+}
+
+async function processTarget (tenantId, scanId, target, channels, settings, opts) {
   const dates = resolveDates(target)
   const los = dates.los
   let spent = 0
 
-  const { token, spent: tokenSpent } = await ensureToken(target, dates, opts)
+  const connector = connectorForVertical(target.vertical || 'hotel')
+
+  const { token, spent: tokenSpent } = await ensureToken(tenantId, target, dates, opts)
   spent += tokenSpent
 
-  const { offers } = await serp.fetchOffers(token, target.serp_query, {
-    checkIn: dates.checkIn,
-    checkOut: dates.checkOut,
-    adults: target.adults,
-    los
-  }, opts)
+  // O conector resolve as datas internamente a partir do target e devolve Offer[]
+  // ja normalizado (com currency). Passamos o handle recem-garantido. O budget e
+  // consumido dentro do conector via ctx.budget (respeita o teto de 250/mes).
+  const { offers } = await connector.fetchOffers({ ...target, serp_property_token: token }, buildCtx(target, opts))
   spent += 1
 
   // Mapeia ofertas -> canais monitorados. Ofertas de canais nao cadastrados
@@ -129,10 +151,10 @@ async function processTarget (scanId, target, channels, settings, opts) {
   for (const o of observations) {
     await query(
       `INSERT INTO rates (scan_id, property_id, channel_id, target_id, check_in, check_out,
-                          los, adults, price, currency, source_raw)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+                          los, adults, price, currency, source_raw, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [scanId, target.property_id, o.channel.id, target.id, dates.checkIn, dates.checkOut,
-        los, target.adults, o.price, target.currency, o.sourceRaw]
+        los, target.adults, o.price, target.currency, o.sourceRaw, tenantId]
     )
   }
 
@@ -140,10 +162,10 @@ async function processTarget (scanId, target, channels, settings, opts) {
   for (const f of found) {
     await query(
       `INSERT INTO findings (scan_id, property_id, channel_id, target_id, check_in, check_out,
-                             kind, base_price, channel_price, delta_abs, delta_pct, severity)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+                             kind, base_price, channel_price, delta_abs, delta_pct, severity, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [scanId, target.property_id, f.channelId ?? null, target.id, dates.checkIn, dates.checkOut,
-        f.kind, f.basePrice, f.channelPrice, f.deltaAbs, f.deltaPct, f.severity]
+        f.kind, f.basePrice, f.channelPrice, f.deltaAbs, f.deltaPct, f.severity, tenantId]
     )
   }
 
@@ -153,9 +175,9 @@ async function processTarget (scanId, target, channels, settings, opts) {
   for (const c of missing) {
     await query(
       `INSERT INTO findings (scan_id, property_id, channel_id, target_id, check_in, check_out,
-                             kind, severity)
-       VALUES ($1,$2,$3,$4,$5,$6,'missing_channel','info')`,
-      [scanId, target.property_id, c.id, target.id, dates.checkIn, dates.checkOut]
+                             kind, severity, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,'missing_channel','info',$7)`,
+      [scanId, target.property_id, c.id, target.id, dates.checkIn, dates.checkOut, tenantId]
     )
   }
 
@@ -163,30 +185,26 @@ async function processTarget (scanId, target, channels, settings, opts) {
 }
 
 /**
- * Executa uma varredura completa.
- * @param {'schedule'|'manual'} trigger
+ * Executa a varredura de UM tenant. Escopa canais/alvos/gravacoes pelo tenant_id.
+ * O orcamento (SerpAPI global) e a notificacao seguem globais na F1 -- o
+ * orcamento por-tenant e a notificacao por-tenant sao o §11.4 (proxima peca).
  */
-export async function runScan ({ trigger = 'schedule' } = {}) {
-  if (running) {
-    return { skipped: true, reason: 'Uma varredura ja esta em andamento' }
-  }
-  running = true
-
-  const settings = await getSettings()
-  const channels = await loadChannels()
+async function scanTenant (tenantId, { trigger = 'schedule' } = {}) {
+  const settings = await getSettings(tenantId)
+  const channels = await loadChannels(tenantId)
   // Antes de contar alvos: retira os de data fixa que ja passaram, senao eles
   // entrariam no orcamento desta varredura.
-  const expired = await expirePastTargets().catch(() => [])
+  const expired = await expirePastTargets(tenantId).catch(() => [])
   // Gera os periodos da semana (fim de semana e meio de semana). So age as
   // tercas, ou no primeiro boot, para o sistema ja subir com dados.
-  const auto = await ensureAutoTargets().catch(() => ({ generated: [] }))
-  const targets = await loadTargets()
+  const auto = await ensureAutoTargets({ tenantId }).catch(() => ({ generated: [] }))
+  const targets = await loadTargets(tenantId)
   // Disparo manual pode usar a reserva de emergencia; o agendador nunca pode.
   const opts = { allowReserve: trigger === 'manual' }
 
   const { rows: scanRows } = await query(
-    'INSERT INTO scans (trigger, targets_total) VALUES ($1, $2) RETURNING id',
-    [trigger, targets.length]
+    'INSERT INTO scans (trigger, targets_total, tenant_id) VALUES ($1, $2, $3) RETURNING id',
+    [trigger, targets.length, tenantId]
   )
   const scanId = scanRows[0].id
 
@@ -196,8 +214,6 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
   let findings = 0
   const errors = []
   // Anunciantes que apareceram mas nao correspondem a nenhum canal cadastrado.
-  // Ficam registrados porque um deles pode estar furando a paridade sem que
-  // ninguem esteja olhando.
   const unmatched = new Set()
 
   try {
@@ -210,16 +226,15 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
     const available = opts.allowReserve ? usage.remaining : usage.scheduledRemaining
     if (available < 1) {
       await query(
-        `UPDATE scans SET status='skipped', finished_at=now(),
-                          message=$2 WHERE id=$1`,
+        `UPDATE scans SET status='skipped', finished_at=now(), message=$2 WHERE id=$1`,
         [scanId, `Orcamento SerpAPI esgotado (${usage.used}/${usage.limit})`]
       )
-      return { scanId, skipped: true, reason: 'budget', usage }
+      return { scanId, tenantId, skipped: true, reason: 'budget', usage }
     }
 
     for (const target of targets) {
       try {
-        const r = await processTarget(scanId, target, channels, settings, opts)
+        const r = await processTarget(tenantId, scanId, target, channels, settings, opts)
         spent += r.spent
         rates += r.rates
         findings += r.findings
@@ -250,19 +265,49 @@ export async function runScan ({ trigger = 'schedule' } = {}) {
       [scanId, status, spent, ok, rates, findings, notes.join(' | ') || null]
     )
 
-    const notification = await notifyScan(scanId).catch((err) => ({
+    const notification = await notifyScan(scanId, tenantId).catch((err) => ({
       sent: false,
       error: err.message
     }))
 
-    return { scanId, status, spent, ok, rates, findings, errors, notification }
+    return { scanId, tenantId, status, spent, ok, rates, findings, errors, notification }
   } catch (err) {
     await query(
-      `UPDATE scans SET status='failed', finished_at=now(), requests_used=$3, message=$2
-       WHERE id=$1`,
+      `UPDATE scans SET status='failed', finished_at=now(), requests_used=$3, message=$2 WHERE id=$1`,
       [scanId, err.message, spent]
     )
     throw err
+  }
+}
+
+/**
+ * Executa uma varredura completa. Sem `tenantId`, itera todos os tenants ativos
+ * (agendador global). Com `tenantId`, escopa a UM tenant -- e o que o disparo
+ * manual de um tenant_admin usa, para nao varrer (nem gastar orcamento com) os
+ * outros tenants. A guarda `running` cobre o ciclo inteiro (1 replica -- o cron
+ * nao pode duplicar).
+ * @param {{trigger?: 'schedule'|'manual', tenantId?: number}} [opts]
+ */
+export async function runScan ({ trigger = 'schedule', tenantId = null } = {}) {
+  if (running) {
+    return { skipped: true, reason: 'Uma varredura ja esta em andamento' }
+  }
+  running = true
+
+  try {
+    const { rows: tenants } = Number.isInteger(tenantId)
+      ? { rows: [{ id: tenantId }] }
+      : await query('SELECT id FROM tenants WHERE active ORDER BY id')
+    const runs = []
+    for (const t of tenants) {
+      try {
+        runs.push(await scanTenant(t.id, { trigger }))
+      } catch (err) {
+        console.error(`[scan] tenant #${t.id} falhou:`, err.message)
+        runs.push({ tenantId: t.id, status: 'failed', error: err.message })
+      }
+    }
+    return { runs }
   } finally {
     running = false
   }

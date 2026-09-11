@@ -34,9 +34,9 @@ export const SEVERITY = {
 }
 
 export const KIND = {
-  undercut: 'OTA abaixo do direto',
-  overcut: 'OTA acima do direto',
-  missing_direct: 'Tarifa direta ausente',
+  undercut: 'Canal abaixo do seu preço',
+  overcut: 'Canal acima do seu preço',
+  missing_direct: 'Seu preço oficial indisponível',
   missing_channel: 'Canal sem oferta'
 }
 

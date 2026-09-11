@@ -12,7 +12,7 @@
   --surface:        #ffffff;
   --surface-2:      #fbfbfd;
   --surface-sunken: #f0f0f3;
-  --sidebar:        rgba(250, 250, 252, 0.72);
+  --sidebar:        rgba(250, 250, 252, 0.60);
 
   /* Tinta */
   --ink:            #1d1d1f;
@@ -26,10 +26,15 @@
   --grid:           #e1e0d9;
   --axis:           #c3c2b7;
 
-  /* Ação */
-  --accent:         #0071e3;
-  --accent-hover:   #0077ed;
-  --accent-wash:    rgba(0, 113, 227, 0.10);
+  /* Ação / marca white-label (Camada 3 — macOS sóbrio, single-hue; tenant só troca --brand-accent).
+     Sem cross-hue (nada de azul→roxo): o "strong" é o mesmo azul mais escuro, o gradiente é um sheen sutil. */
+  --brand-accent:        #0071e3;
+  --brand-accent-strong: color-mix(in srgb, var(--brand-accent) 78%, #000);
+  --brand-gradient:      linear-gradient(180deg, var(--brand-accent), var(--brand-accent-strong));
+  --accent:              var(--brand-accent);
+  --accent-btn:          var(--accent);   /* fill do botão primário — no escuro aprofunda p/ AA */
+  --accent-hover:        color-mix(in srgb, var(--accent) 88%, white);
+  --accent-wash:         color-mix(in srgb, var(--accent) 12%, transparent);
 
   /* Estado (paleta de status reservada — nunca usada como série) */
   --good:           #0ca30c;
@@ -41,9 +46,32 @@
   --serious-wash:   rgba(236, 131, 90, 0.16);
   --critical-wash:  rgba(208, 59, 59, 0.12);
 
+  /* Tinta AA dos badges sobre a superfície (Camada 2 — substitui hex cravado) */
+  --on-good:        #0a7a0a;
+  --on-warning:     #8a6100;
+  --on-serious:     #b4501f;
+  --on-critical:    #b02525;
+
   /* Séries categóricas (modo claro) */
   --series-1: #2a78d6;  --series-2: #eb6834;  --series-3: #1baf7a;  --series-4: #eda100;
   --series-5: #e87ba4;  --series-6: #008300;  --series-7: #4a3aa7;  --series-8: #e34948;
+
+  /* Rampa sequencial azul (Camada 1 — formaliza BLUE_RAMP; AZUL FIXO nos 2 modos) */
+  --seq-100: #cde2fb;  --seq-200: #9ec5f4;  --seq-300: #6da7ec;  --seq-400: #3987e5;
+  --seq-500: #256abf;  --seq-600: #184f95;  --seq-700: #0d366b;
+
+  /* Escala tipográfica (Camada 2) */
+  --text-11: 11px; --text-12: 12.5px; --text-13: 13.5px; --text-14: 14px;
+  --text-16: 16px; --text-20: 20px; --text-28: 28px; --text-32: 32px; --text-48: 48px;
+  --lh-tight: 1.1; --lh-snug: 1.3; --lh-body: 1.47;
+  --track-tight: -.022em; --track-body: -.01em;
+
+  /* Escala de espaçamento 4pt (Camada 2) */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-10: 40px; --space-14: 56px;
+
+  /* Gráfico: anel de célula do heatmap — transparente no claro, hairline no escuro */
+  --heat-cell-ring: transparent;
 
   --shadow-sm: 0 1px 2px rgba(0,0,0,.04), 0 1px 3px rgba(0,0,0,.06);
   --shadow-md: 0 2px 8px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
@@ -61,7 +89,7 @@
     --surface:        #1c1c1e;
     --surface-2:      #232325;
     --surface-sunken: #141416;
-    --sidebar:        rgba(28, 28, 30, 0.72);
+    --sidebar:        rgba(28, 28, 30, 0.60);
     --ink:            #f5f5f7;
     --ink-2:          #c3c2b7;
     --ink-3:          #898781;
@@ -69,18 +97,73 @@
     --hairline-soft:  rgba(255, 255, 255, 0.07);
     --grid:           #2c2c2a;
     --axis:           #383835;
-    --accent:         #0a84ff;
-    --accent-hover:   #3a9bff;
-    --accent-wash:    rgba(10, 132, 255, 0.16);
+    --brand-accent:   #0a84ff;
+    --accent-btn:     color-mix(in srgb, var(--accent) 82%, #000); /* branco/fill = 5.15:1 (AA) */
     --good-wash:      rgba(12, 163, 12, 0.20);
     --warning-wash:   rgba(250, 178, 25, 0.20);
     --serious-wash:   rgba(236, 131, 90, 0.20);
     --critical-wash:  rgba(208, 59, 59, 0.22);
+    --on-good:        #4ade4a;
+    --on-warning:     #fac83f;
+    --on-serious:     #f0a37f;
+    --on-critical:    #f07070;
+    --heat-cell-ring: var(--hairline);
     --series-1: #3987e5;  --series-2: #d95926;  --series-3: #199e70;  --series-4: #c98500;
     --series-5: #d55181;  --series-6: #008300;  --series-7: #9085e9;  --series-8: #e66767;
     --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
     --shadow-md: 0 2px 8px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
     --shadow-lg: 0 8px 40px rgba(0,0,0,.5);
+  }
+}
+
+/* Escuro forçado (vence em SO claro também) — espelho do bloco @media acima; manter
+   os dois em sincronia. Só sobrescreve --brand-accent: --accent/-hover/-wash e
+   --brand-gradient derivam no :root e recomputam sozinhos. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:          #000000;
+  --surface:        #1c1c1e;
+  --surface-2:      #232325;
+  --surface-sunken: #141416;
+  --sidebar:        rgba(28, 28, 30, 0.60);
+  --ink:            #f5f5f7;
+  --ink-2:          #c3c2b7;
+  --ink-3:          #898781;
+  --hairline:       rgba(255, 255, 255, 0.12);
+  --hairline-soft:  rgba(255, 255, 255, 0.07);
+  --grid:           #2c2c2a;
+  --axis:           #383835;
+  --brand-accent:   #0a84ff;
+  --accent-btn:     color-mix(in srgb, var(--accent) 82%, #000); /* branco/fill = 5.15:1 (AA) */
+  --good-wash:      rgba(12, 163, 12, 0.20);
+  --warning-wash:   rgba(250, 178, 25, 0.20);
+  --serious-wash:   rgba(236, 131, 90, 0.20);
+  --critical-wash:  rgba(208, 59, 59, 0.22);
+  --on-good:        #4ade4a;
+  --on-warning:     #fac83f;
+  --on-serious:     #f0a37f;
+  --on-critical:    #f07070;
+  --heat-cell-ring: var(--hairline);
+  --series-1: #3987e5;  --series-2: #d95926;  --series-3: #199e70;  --series-4: #c98500;
+  --series-5: #d55181;  --series-6: #008300;  --series-7: #9085e9;  --series-8: #e66767;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-md: 0 2px 8px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  --shadow-lg: 0 8px 40px rgba(0,0,0,.5);
+}
+
+/* ─── Acessibilidade global (Lote 1 S3.5/3.6) ──────────────────────────────
+   Foco visível por teclado (anel em accent) e respeito a prefers-reduced-motion.
+   :where() = especificidade zero, não briga com estilos de componente. */
+:where(button, a, input, select, .nav-item, .segmented button, .switch input, .chip button, [role="button"]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3.5px var(--accent-wash), 0 0 0 1.5px var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
   }
 }
 
@@ -157,7 +240,7 @@ a:hover { text-decoration: underline; }
   width: 52px; height: 52px;
   border-radius: 14px;
   display: grid; place-items: center;
-  background: linear-gradient(160deg, var(--accent), #5856d6);
+  background: var(--brand-gradient);
   color: #fff;
   font-size: 24px;
   margin-bottom: 22px;
@@ -193,7 +276,7 @@ a:hover { text-decoration: underline; }
 }
 .brand-mark {
   width: 32px; height: 32px; border-radius: 9px;
-  background: linear-gradient(160deg, var(--accent), #5856d6);
+  background: var(--brand-gradient);
   color: #fff; display: grid; place-items: center;
   font-size: 15px; font-weight: 700; flex-shrink: 0;
 }
@@ -252,7 +335,7 @@ a:hover { text-decoration: underline; }
   padding: 8px 16px;
   border-radius: 99px;
   border: 1px solid transparent;
-  background: var(--accent); color: #fff;
+  background: var(--accent-btn); color: #fff;
   font: inherit; font-size: 13.5px; font-weight: 500;
   cursor: pointer;
   transition: background .15s var(--ease), transform .1s var(--ease), opacity .15s;
@@ -360,7 +443,7 @@ a:hover { text-decoration: underline; }
 .card-note { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; }
 
 .grid { display: grid; gap: 16px; }
-.grid.kpi  { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.grid.kpi  { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items: start; }
 .grid.two  { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
 .stack { display: grid; gap: 16px; }
 
@@ -399,19 +482,12 @@ a:hover { text-decoration: underline; }
   white-space: nowrap;
 }
 .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.badge.good     { background: var(--good-wash);     color: #0a7a0a; }
-.badge.warning  { background: var(--warning-wash);  color: #8a6100; }
-.badge.serious  { background: var(--serious-wash);  color: #b4501f; }
-.badge.critical { background: var(--critical-wash); color: #b02525; }
+.badge.good     { background: var(--good-wash);     color: var(--on-good); }
+.badge.warning  { background: var(--warning-wash);  color: var(--on-warning); }
+.badge.serious  { background: var(--serious-wash);  color: var(--on-serious); }
+.badge.critical { background: var(--critical-wash); color: var(--on-critical); }
 .badge.info     { background: var(--accent-wash);   color: var(--accent); }
 .badge.neutral  { background: var(--surface-sunken); color: var(--ink-2); }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .badge.good     { color: #4ade4a; }
-  :root:not([data-theme="light"]) .badge.warning  { color: #fac83f; }
-  :root:not([data-theme="light"]) .badge.serious  { color: #f0a37f; }
-  :root:not([data-theme="light"]) .badge.critical { color: #f07070; }
-}
 
 /* ─── Tabelas ───────────────────────────────────────────────────────────── */
 

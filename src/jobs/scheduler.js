@@ -20,11 +20,19 @@ export function startScheduler () {
       const result = await runScan({ trigger: 'schedule' })
       if (result.skipped) {
         console.warn(`[scheduler] varredura pulada: ${result.reason}`)
-      } else {
-        console.log(
-          `[scheduler] varredura #${result.scanId} ${result.status}: ` +
-          `${result.rates} tarifas, ${result.findings} achados, ${result.spent} requisicoes`
-        )
+        return
+      }
+      for (const run of result.runs) {
+        if (run.skipped) {
+          console.warn(`[scheduler] tenant #${run.tenantId} pulado: ${run.reason}`)
+        } else if (run.status === 'failed' && run.error) {
+          console.error(`[scheduler] tenant #${run.tenantId} falhou: ${run.error}`)
+        } else {
+          console.log(
+            `[scheduler] tenant #${run.tenantId} varredura #${run.scanId} ${run.status}: ` +
+            `${run.rates} tarifas, ${run.findings} achados, ${run.spent} requisicoes`
+          )
+        }
       }
     } catch (err) {
       console.error('[scheduler] varredura falhou:', err.message)

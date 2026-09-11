@@ -1,0 +1,63 @@
+name: test
+
+# Matriz de teste com um Postgres EFEMERO e DESCARTAVEL (service container),
+# criado e destruido a cada run. NUNCA aponta para producao (servidor 3):
+# TEST_DATABASE_URL resolve so dentro do runner (127.0.0.1). Isto e o que
+# destrava os testes de integracao de isolamento multi-tenant (Sentinela) e a
+# migracao — eles "ligam sozinhos" quando TEST_DATABASE_URL existe e o schema
+# esta publicado (ver test/helpers/pg.js).
+
+on:
+  push:
+    branches: [main, feat/plataforma-multitenant]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: parity_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d parity_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Postgres de TESTE (efemero do runner). NAO e producao.
+      TEST_DATABASE_URL: postgres://test:test@127.0.0.1:5432/parity_test?sslmode=disable
+      DATABASE_URL: postgres://test:test@127.0.0.1:5432/parity_test?sslmode=disable
+      PGSSLMODE: disable
+      NODE_ENV: test
+      SCHEDULER_ENABLED: "false"
+      JWT_SECRET: ci-throwaway-secret-nao-e-producao-0000000000000000
+      ADMIN_EMAIL: ci-admin@parity.test
+      ADMIN_PASSWORD: ci-throwaway-admin
+      ADMIN_NAME: CI Admin
+      SUPERADMIN_EMAIL: ci-super@parity.test
+      SUPERADMIN_PASSWORD: ci-throwaway-super
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Publica o schema multi-tenant no Postgres de teste
+        run: npm run migrate
+
+      - name: Testes (matriz de isolamento liga com TEST_DATABASE_URL)
+        run: npm test

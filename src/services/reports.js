@@ -1,10 +1,15 @@
 import { query } from '../db/pool.js'
 import { forecast } from '../lib/budget.js'
 
+// Todos os relatorios sao ESCOPADOS por tenant. `tenantId` e opcional e cai no
+// tenant #1 (Enotel) por padrao -- transicao segura; nenhuma query le sem filtro
+// de tenant, entao um tenant jamais enxerga dados de outro. O orcamento SerpAPI
+// (forecast) segue global na F1 (chave unica), migra p/ per-tenant no §11.4.
+
 /** KPIs do topo do painel. */
-export async function overview () {
+export async function overview ({ tenantId = 1 } = {}) {
   const [lastScan, severity, coverage, budget, trendDelta] = await Promise.all([
-    query(`SELECT * FROM scans ORDER BY started_at DESC LIMIT 1`),
+    query('SELECT * FROM scans WHERE tenant_id = $1 ORDER BY started_at DESC LIMIT 1', [tenantId]),
 
     query(
       `SELECT severity, COUNT(*)::int AS count
@@ -12,18 +17,25 @@ export async function overview () {
        WHERE status = 'open'
          AND kind IN ('undercut','overcut','missing_direct')
          AND created_at > now() - interval '7 days'
-       GROUP BY severity`
+         AND tenant_id = $1
+       GROUP BY severity`,
+      [tenantId]
     ),
 
     // Taxa de conformidade da ultima varredura: comparacoes limpas / total.
     query(
-      `WITH last AS (SELECT id FROM scans WHERE status IN ('ok','partial') ORDER BY started_at DESC LIMIT 1)
+      `WITH last AS (
+         SELECT id FROM scans
+         WHERE status IN ('ok','partial') AND tenant_id = $1
+         ORDER BY started_at DESC LIMIT 1
+       )
        SELECT
          (SELECT COUNT(*)::int FROM rates r
             JOIN channels c ON c.id = r.channel_id
            WHERE r.scan_id = (SELECT id FROM last) AND c.kind = 'ota') AS comparisons,
          (SELECT COUNT(*)::int FROM findings f
-           WHERE f.scan_id = (SELECT id FROM last) AND f.kind = 'undercut') AS violations`
+           WHERE f.scan_id = (SELECT id FROM last) AND f.kind = 'undercut') AS violations`,
+      [tenantId]
     ),
 
     forecast(),
@@ -34,7 +46,9 @@ export async function overview () {
               c.name AS channel_name
        FROM findings f JOIN channels c ON c.id = f.channel_id
        WHERE f.kind = 'undercut' AND f.created_at > now() - interval '7 days'
-       ORDER BY f.delta_pct ASC LIMIT 1`
+         AND f.tenant_id = $1
+       ORDER BY f.delta_pct ASC LIMIT 1`,
+      [tenantId]
     )
   ])
 
@@ -65,14 +79,13 @@ export async function overview () {
  * Serie temporal de tarifas por canal. Uma linha por canal, um ponto por dia.
  * Fixa um unico alvo (horizonte) para nao misturar niveis de preco diferentes.
  */
-export async function priceTrend ({ days = 30, targetId = null } = {}) {
-  // Devolve todos os alvos para a interface poder oferecer o seletor; o
-  // grafico plota um de cada vez, senao misturaria niveis de preco.
+export async function priceTrend ({ days = 30, targetId = null, tenantId = 1 } = {}) {
   const { rows: targets } = await query(
     `SELECT t.id, t.label, t.mode, t.check_in, t.check_out, t.horizon_days
-     FROM scan_targets t JOIN properties p ON p.id = t.property_id
-     WHERE t.active AND p.active
-     ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`
+     FROM targets t JOIN subjects s ON s.id = t.property_id
+     WHERE t.active AND s.active AND t.tenant_id = $1 AND NOT t.ephemeral
+     ORDER BY COALESCE(t.check_in, CURRENT_DATE + t.horizon_days)`,
+    [tenantId]
   )
   const target = targetId || targets[0]?.id
   if (!target) return { target: null, targets: [], dates: [], series: [] }
@@ -83,11 +96,11 @@ export async function priceTrend ({ days = 30, targetId = null } = {}) {
             ROUND(AVG(r.price)::numeric, 2) AS price
      FROM rates r
      JOIN channels c ON c.id = r.channel_id
-     WHERE r.target_id = $1
+     WHERE r.target_id = $1 AND r.tenant_id = $3
        AND r.captured_at > now() - ($2 || ' days')::interval
      GROUP BY day, c.slug, c.name, c.color, c.kind, c.sort_order
      ORDER BY day, c.sort_order`,
-    [target, String(days)]
+    [target, String(days), tenantId]
   )
 
   const dates = [...new Set(rows.map((r) => r.day.toISOString().slice(0, 10)))].sort()
@@ -101,7 +114,6 @@ export async function priceTrend ({ days = 30, targetId = null } = {}) {
 
   const series = [...bySlug.values()].map((s) => ({
     ...s,
-    // null preserva a lacuna no grafico em vez de ligar dois dias distantes
     values: dates.map((d) => (d in s.data ? s.data[d] : null))
   }))
 
@@ -119,12 +131,13 @@ export async function priceTrend ({ days = 30, targetId = null } = {}) {
 }
 
 /** Conformidade por canal no periodo: quantas comparacoes, quantas furaram. */
-export async function channelCompliance ({ days = 30 } = {}) {
+export async function channelCompliance ({ days = 30, tenantId = 1 } = {}) {
   const { rows } = await query(
     `WITH comparisons AS (
        SELECT r.channel_id, COUNT(*)::int AS total
        FROM rates r JOIN channels c ON c.id = r.channel_id
-       WHERE c.kind = 'ota' AND r.captured_at > now() - ($1 || ' days')::interval
+       WHERE c.kind = 'ota' AND r.tenant_id = $2
+         AND r.captured_at > now() - ($1 || ' days')::interval
        GROUP BY r.channel_id
      ),
      viol AS (
@@ -133,7 +146,8 @@ export async function channelCompliance ({ days = 30 } = {}) {
               ROUND(AVG(f.delta_pct)::numeric, 2) AS avg_delta,
               ROUND(MIN(f.delta_pct)::numeric, 2) AS worst_delta
        FROM findings f
-       WHERE f.kind = 'undercut' AND f.created_at > now() - ($1 || ' days')::interval
+       WHERE f.kind = 'undercut' AND f.tenant_id = $2
+         AND f.created_at > now() - ($1 || ' days')::interval
        GROUP BY f.channel_id
      )
      SELECT c.slug, c.name, c.color,
@@ -143,9 +157,9 @@ export async function channelCompliance ({ days = 30 } = {}) {
      FROM channels c
      LEFT JOIN comparisons cp ON cp.channel_id = c.id
      LEFT JOIN viol v ON v.channel_id = c.id
-     WHERE c.kind = 'ota' AND c.active
+     WHERE c.kind = 'ota' AND c.active AND c.tenant_id = $2
      ORDER BY c.sort_order`,
-    [String(days)]
+    [String(days), tenantId]
   )
 
   return rows.map((r) => ({
@@ -159,24 +173,25 @@ export async function channelCompliance ({ days = 30 } = {}) {
 }
 
 /** Violacoes por dia e por canal -- alimenta o heatmap do relatorio. */
-export async function violationHeatmap ({ days = 30 } = {}) {
+export async function violationHeatmap ({ days = 30, tenantId = 1 } = {}) {
   const { rows } = await query(
     `SELECT date_trunc('day', f.created_at AT TIME ZONE 'America/Recife')::date AS day,
             c.slug, c.name,
             COUNT(*)::int AS violations,
             ROUND(MIN(f.delta_pct)::numeric, 2) AS worst_delta
      FROM findings f JOIN channels c ON c.id = f.channel_id
-     WHERE f.kind = 'undercut' AND f.created_at > now() - ($1 || ' days')::interval
+     WHERE f.kind = 'undercut' AND f.tenant_id = $2
+       AND f.created_at > now() - ($1 || ' days')::interval
      GROUP BY day, c.slug, c.name, c.sort_order
      ORDER BY day, c.sort_order`,
-    [String(days)]
+    [String(days), tenantId]
   )
   return rows.map((r) => ({ ...r, day: r.day.toISOString().slice(0, 10) }))
 }
 
-export async function listFindings ({ days = 30, severity = null, channel = null, status = null, limit = 200 } = {}) {
-  const clauses = [`f.created_at > now() - ($1 || ' days')::interval`]
-  const params = [String(days)]
+export async function listFindings ({ days = 30, severity = null, channel = null, status = null, limit = 200, tenantId = 1 } = {}) {
+  const clauses = [`f.created_at > now() - ($1 || ' days')::interval`, 'f.tenant_id = $2']
+  const params = [String(days), tenantId]
 
   if (severity) { params.push(severity); clauses.push(`f.severity = $${params.length}`) }
   if (channel) { params.push(channel); clauses.push(`c.slug = $${params.length}`) }
@@ -188,8 +203,8 @@ export async function listFindings ({ days = 30, severity = null, channel = null
             p.name AS property_name, t.label AS target_label, t.los
      FROM findings f
      LEFT JOIN channels c ON c.id = f.channel_id
-     LEFT JOIN properties p ON p.id = f.property_id
-     LEFT JOIN scan_targets t ON t.id = f.target_id
+     LEFT JOIN subjects p ON p.id = f.property_id
+     LEFT JOIN targets t ON t.id = f.target_id
      WHERE ${clauses.join(' AND ')}
        AND f.kind IN ('undercut','overcut','missing_direct')
      ORDER BY f.created_at DESC,
@@ -202,19 +217,22 @@ export async function listFindings ({ days = 30, severity = null, channel = null
 }
 
 /** Snapshot mais recente: preco atual de cada canal por data-alvo. */
-export async function currentRates () {
+export async function currentRates ({ tenantId = 1 } = {}) {
   const { rows } = await query(
     `WITH last AS (
-       SELECT id FROM scans WHERE status IN ('ok','partial') ORDER BY started_at DESC LIMIT 1
+       SELECT id FROM scans
+       WHERE status IN ('ok','partial') AND tenant_id = $1
+       ORDER BY started_at DESC LIMIT 1
      )
      SELECT r.check_in, r.check_out, r.los, r.price, r.currency,
             c.slug, c.name AS channel_name, c.color, c.kind,
             t.label AS target_label, t.horizon_days, t.mode
      FROM rates r
      JOIN channels c ON c.id = r.channel_id
-     LEFT JOIN scan_targets t ON t.id = r.target_id
-     WHERE r.scan_id = (SELECT id FROM last)
-     ORDER BY r.check_in, c.sort_order`
+     LEFT JOIN targets t ON t.id = r.target_id
+     WHERE r.scan_id = (SELECT id FROM last) AND r.tenant_id = $1
+     ORDER BY r.check_in, c.sort_order`,
+    [tenantId]
   )
 
   const groups = new Map()
@@ -240,8 +258,6 @@ export async function currentRates () {
     })
   }
 
-  // Anexa o desvio de cada OTA contra a tarifa direta do mesmo bloco.
-  // Ordena por data de check-in: horizonDays e nulo nos alvos de data fixa.
   const out = [...groups.values()].sort((a, b) => a.checkIn.localeCompare(b.checkIn))
   for (const g of out) {
     const direct = g.offers.find((o) => o.kind === 'direct')
@@ -255,26 +271,26 @@ export async function currentRates () {
   return out
 }
 
-export async function scanHistory ({ limit = 30 } = {}) {
+export async function scanHistory ({ limit = 30, tenantId = 1 } = {}) {
   const { rows } = await query(
     `SELECT id, trigger, status, started_at, finished_at, requests_used,
             targets_total, targets_ok, rates_captured, findings_count, message
-     FROM scans ORDER BY started_at DESC LIMIT $1`,
-    [limit]
+     FROM scans WHERE tenant_id = $2 ORDER BY started_at DESC LIMIT $1`,
+    [limit, tenantId]
   )
   return rows
 }
 
 /** Pacote unico para a pagina de relatorio e para exportacao. */
-export async function fullReport ({ days = 30 } = {}) {
+export async function fullReport ({ days = 30, tenantId = 1 } = {}) {
   const [ov, trend, compliance, heatmap, findings, rates, history] = await Promise.all([
-    overview(),
-    priceTrend({ days }),
-    channelCompliance({ days }),
-    violationHeatmap({ days }),
-    listFindings({ days, limit: 500 }),
-    currentRates(),
-    scanHistory({ limit: days })
+    overview({ tenantId }),
+    priceTrend({ days, tenantId }),
+    channelCompliance({ days, tenantId }),
+    violationHeatmap({ days, tenantId }),
+    listFindings({ days, limit: 500, tenantId }),
+    currentRates({ tenantId }),
+    scanHistory({ limit: days, tenantId })
   ])
   return {
     generatedAt: new Date().toISOString(),
@@ -311,6 +327,5 @@ export function findingsToCsv (findings) {
       f.delta_abs ?? '', f.delta_pct ?? '', f.severity, f.status
     ].map(esc).join(';'))
   }
-  // BOM para o Excel pt-BR abrir com acentuacao correta
   return '﻿' + lines.join('\r\n')
 }

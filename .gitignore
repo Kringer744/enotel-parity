@@ -10,3 +10,6 @@ Thumbs.db
 # arquivos temporarios de mensagem de commit
 .msg.tmp
 .fn.tmp
+
+# terminais de agentes Maestri
+.maestri/

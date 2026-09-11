@@ -75,8 +75,10 @@ export function computeAutoPeriods (today = recifeToday()) {
  * alvo automatico existe ainda (primeiro boot), para o sistema ja subir com
  * dados em vez de esperar a proxima terca.
  */
-export async function ensureAutoTargets ({ force = false } = {}) {
-  const settings = await getSettings()
+export async function ensureAutoTargets ({ force = false, tenantId = null } = {}) {
+  // Escopado ao tenant quando `tenantId` e dado (chamada do scanner por tenant e
+  // da rota /targets/auto/generate do tenant_admin); sem ele, opera global.
+  const settings = await getSettings(Number.isInteger(tenantId) ? tenantId : 1)
   const cfg = settings.auto_targets
   if (!cfg.enabled) return { generated: [], skipped: 'desativado' }
 
@@ -84,8 +86,10 @@ export async function ensureAutoTargets ({ force = false } = {}) {
   const isGenerationDay = today.getUTCDay() === TUESDAY
 
   const { rows: existing } = await query(
-    `SELECT COUNT(*)::int AS n FROM scan_targets
-     WHERE auto_key IS NOT NULL AND active AND check_in > CURRENT_DATE`
+    `SELECT COUNT(*)::int AS n FROM targets
+     WHERE auto_key IS NOT NULL AND active AND check_in > CURRENT_DATE
+       AND ($1::int IS NULL OR tenant_id = $1)`,
+    [tenantId]
   )
   const bootstrap = existing[0].n === 0
 
@@ -93,24 +97,25 @@ export async function ensureAutoTargets ({ force = false } = {}) {
     return { generated: [], skipped: 'fora do dia de geracao' }
   }
 
-  const { rows: properties } = await query(
-    'SELECT id FROM properties WHERE active ORDER BY id'
+  const { rows: subjects } = await query(
+    'SELECT id, tenant_id FROM subjects WHERE active AND ($1::int IS NULL OR tenant_id = $1) ORDER BY id',
+    [tenantId]
   )
   const periods = computeAutoPeriods(today)
   const generated = []
 
-  for (const p of properties) {
+  for (const p of subjects) {
     for (const period of periods) {
       // O indice unico parcial impede duplicar a mesma estadia; o DO NOTHING
       // deixa a operacao idempotente se a varredura rodar duas vezes no dia.
       const { rows } = await query(
-        `INSERT INTO scan_targets
-           (property_id, label, mode, check_in, check_out, los, adults, auto_key)
-         VALUES ($1, $2, 'fixed', $3, $4, 2, $5, $6)
+        `INSERT INTO targets
+           (property_id, label, mode, check_in, check_out, los, adults, auto_key, tenant_id)
+         VALUES ($1, $2, 'fixed', $3, $4, 2, $5, $6, $7)
          ON CONFLICT (property_id, check_in, check_out, adults) WHERE mode = 'fixed'
            DO NOTHING
          RETURNING id, label`,
-        [p.id, period.label, period.checkIn, period.checkOut, cfg.adults, period.key]
+        [p.id, period.label, period.checkIn, period.checkOut, cfg.adults, period.key, p.tenant_id]
       )
       if (rows[0]) generated.push(rows[0].label)
     }

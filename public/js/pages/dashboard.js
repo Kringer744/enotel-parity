@@ -1,0 +1,254 @@
+import { api } from '../api.js'
+import { fmtDate, fmtRelative, pct, escapeHtml, toast, busy, skeleton, loading, refreshIcons } from '../ui.js'
+import { lineChart, money2 } from '../charts.js'
+import { state, navigate, refreshNav } from '../core/state.js'
+import { periodPicker, wirePeriod } from '../components/period.js'
+import { waitForScan } from '../components/scan.js'
+import { renderRanking } from '../components/ranking.js'
+import { findingsTable, wireFindingRows } from '../components/findings-table.js'
+import { renderPeriodSelector } from '../components/period-selector.js'
+
+/* ═══ Painel ══════════════════════════════════════════════════════════════ */
+
+/** Abre o seletor de período (F2) como um modal centralizado. */
+function openPeriodModal (main) {
+  const overlay = document.createElement('div')
+  overlay.className = 'ps-overlay'
+  const close = () => { overlay.remove(); document.removeEventListener('keydown', onEsc) }
+  const onEsc = (e) => { if (e.key === 'Escape') close() }
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close() })
+  document.addEventListener('keydown', onEsc)
+  document.body.appendChild(overlay)
+  renderPeriodSelector(overlay, {
+    onClose: close,
+    onCreated: () => { close(); renderPeriodChips() },
+    onScanStart: () => {
+      close()
+      document.getElementById('ranking').innerHTML = loading('Buscando os preços do período escolhido...', 260)
+      document.getElementById('recent').innerHTML = loading('Isso leva de 10 a 40 segundos...', 200)
+    },
+    onScanned: () => { if (state.page === 'dashboard') pageDashboard(main) }
+  })
+}
+
+/** Períodos de data fixa em monitoramento, como chips removíveis. */
+async function renderPeriodChips () {
+  const host = document.getElementById('period-chips')
+  if (!host) return
+
+  const props = await api.properties().catch(() => [])
+  const fixed = props.flatMap((p) => p.targets || [])
+    .filter((t) => t.mode === 'fixed' && t.active)
+    .sort((a, b) => String(a.check_in).localeCompare(String(b.check_in)))
+
+  if (fixed.length === 0) {
+    host.innerHTML =
+      '<span class="muted small">Nenhum período específico no acompanhamento. ' +
+      'Use "Escolher período" para adicionar um.</span>'
+    return
+  }
+
+  host.innerHTML = '<span class="muted small">Períodos monitorados:</span>' +
+    fixed.map((t) => `
+      <span class="chip${t.auto_key ? ' auto' : ''}">
+        <i data-lucide="${t.auto_key ? 'sparkles' : 'calendar-check'}" class="icon-sm"></i>
+        ${fmtDate(t.check_in)} a ${fmtDate(t.check_out)}
+        <button data-chip="${t.id}" title="Parar de monitorar">
+          <i data-lucide="x" class="icon-sm"></i>
+        </button>
+      </span>`).join('')
+
+  host.querySelectorAll('[data-chip]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      try {
+        await api.deleteTarget(b.dataset.chip)
+        toast('Período removido do monitoramento', 'ok')
+        await renderPeriodChips()
+      } catch (err) { toast(err.message, 'error') }
+    }))
+
+  refreshIcons(host)
+}
+
+
+export async function pageDashboard (main) {
+  main.innerHTML = `
+    <div class="page-head">
+      <div>
+        <h1>Painel</h1>
+        <p class="page-sub" id="head-sub">Carregando…</p>
+      </div>
+      <div class="row wrap" style="gap:10px">
+        ${periodPicker()}
+        <button class="btn secondary" id="pick-period">
+          <i data-lucide="calendar-plus" class="icon-sm"></i>Escolher período
+        </button>
+        <button class="btn" id="run-scan">Atualizar agora</button>
+      </div>
+    </div>
+    <div id="period-chips" class="period-chips"></div>
+    <div class="grid kpi" id="kpis">${[1, 2, 3].map(() => skeleton(110)).join('')}</div>
+    <div class="grid two" style="margin-top:16px">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Seu preço vs. os canais</div>
+            <div class="card-note">Ranking pelo desvio frente ao seu preço oficial</div>
+          </div>
+        </div>
+        <div id="ranking">${loading('Comparando canais...', 260)}</div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">Preço médio por canal</div>
+            <div class="card-note" id="trend-note">Diária média em reais</div>
+          </div>
+          <select class="select" id="trend-target" style="width:auto;max-width:210px" hidden></select>
+        </div>
+        <div id="trend">${loading('Carregando série histórica...', 300)}</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Violações recentes</div>
+          <div class="card-note">Canais vendendo abaixo do seu preço oficial</div>
+        </div>
+        <button class="btn ghost small" id="see-all">
+          Ver todas <i data-lucide="arrow-right" class="icon-sm"></i>
+        </button>
+      </div>
+      <div id="recent">${loading('Buscando violações...', 200)}</div>
+    </div>
+    <div id="budget-strip" style="margin-top:16px"></div>`
+
+  wirePeriod(() => pageDashboard(main))
+  renderPeriodChips()
+  document.getElementById('pick-period').addEventListener('click', () => openPeriodModal(main))
+  document.getElementById('see-all').addEventListener('click', () => navigate('findings'))
+
+  document.getElementById('run-scan').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget
+    busy(btn, true, 'Atualizando...')
+    try {
+      await api.runScan()
+      document.getElementById('ranking').innerHTML =
+        loading('Buscando os preços nos canais...', 260)
+      document.getElementById('trend').innerHTML =
+        loading('Aguardando os preços da atualização...', 300)
+      document.getElementById('recent').innerHTML =
+        loading('Isso leva de 10 a 40 segundos...', 200)
+
+      const scan = await waitForScan()
+      if (scan?.status === 'ok' || scan?.status === 'partial') {
+        toast(`Atualização concluída: ${scan.rates_captured} preços, ${scan.findings_count} achados`, 'ok')
+      } else if (scan) {
+        toast(`A atualização não completou: ${scan.message || 'tente de novo em instantes'}`, 'error')
+      }
+      if (state.page === 'dashboard') return pageDashboard(main)
+    } catch (err) {
+      toast(err.message, 'error')
+    } finally {
+      busy(btn, false)
+    }
+  })
+
+  const [ov, trend, compliance, findings, rates] = await Promise.all([
+    api.overview(), api.trend(state.days, state.trendTarget), api.compliance(state.days),
+    api.findings({ days: state.days, limit: 8 }), api.currentRates()
+  ])
+
+  state.openCount = ov.openTotal
+  refreshNav()
+
+  document.getElementById('head-sub').textContent = ov.lastScan
+    ? `Última atualização ${fmtRelative(ov.lastScan.started_at)} · ${ov.lastScan.rates_captured} preços coletados`
+    : 'Nenhuma atualização feita ainda'
+
+  const b = ov.budget
+  const budgetTone = b.pctUsed >= 90 ? 'is-critical' : b.pctUsed >= 70 ? 'is-warning' : ''
+
+  document.getElementById('kpis').innerHTML = `
+    <div class="card stat">
+      <div class="stat-label">Violações abertas (7 dias)</div>
+      <div class="stat-value hero">${ov.openTotal}</div>
+      <div class="stat-meta">
+        ${ov.openBySeverity.critical} críticas · ${ov.openBySeverity.serious} graves · ${ov.openBySeverity.warning} atenção
+      </div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Conformidade da última atualização</div>
+      <div class="stat-value">${ov.complianceRate === null ? '—' : pct(ov.complianceRate)}</div>
+      <div class="stat-meta">${ov.violations} de ${ov.comparisons} comparações fora da paridade</div>
+    </div>
+    <div class="card stat">
+      <div class="stat-label">Maior desconto de um canal</div>
+      <div class="stat-value">${ov.worstGap ? pct(Math.abs(ov.worstGap.delta_pct)) : '—'}</div>
+      <div class="stat-meta">
+        ${ov.worstGap
+          ? `${escapeHtml(ov.worstGap.channel_name)} · ${money2(ov.worstGap.channel_price)} vs ${money2(ov.worstGap.base_price)}`
+          : 'Nenhuma violação no período'}
+      </div>
+    </div>`
+
+  document.getElementById('budget-strip').innerHTML = `
+    <div class="card" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 18px">
+      <i data-lucide="gauge" class="icon-sm" style="color:var(--ink-3)"></i>
+      <div class="small">
+        <span class="strong">Consultas de preço</span> · ${b.used} de ${b.limit} este mês ·
+        ${b.willExceed ? `no ritmo atual chega a ${b.projected}` : `${b.perScan} por atualização · renova todo mês`}
+      </div>
+      <div class="meter ${budgetTone}" style="flex:1;min-width:120px;max-width:260px;margin:0"><span style="width:${Math.min(100, b.pctUsed)}%"></span></div>
+      <button class="btn ghost small" id="sync-budget">Conferir o saldo</button>
+    </div>`
+  refreshIcons(document.getElementById('budget-strip'))
+
+  document.getElementById('sync-budget').addEventListener('click', async (ev) => {
+    busy(ev.currentTarget, true, 'Sincronizando…')
+    try {
+      const r = await api.budgetSync()
+      toast(r.synced
+        ? `Saldo conferido: ${r.real} consultas usadas este mês`
+        : `Não foi possível ler a conta: ${r.error}`, r.synced ? 'ok' : 'error')
+      if (r.synced) pageDashboard(main)
+    } catch (err) {
+      toast(err.message, 'error')
+      busy(ev.currentTarget, false)
+    }
+  })
+
+  // Um alvo por vez: plotar juntos misturaria níveis de preço de check-ins
+  // diferentes e a curva não significaria nada.
+  const targetSelect = document.getElementById('trend-target')
+  if ((trend.targets || []).length > 1) {
+    targetSelect.hidden = false
+    targetSelect.innerHTML = trend.targets.map((t) => `
+      <option value="${t.id}" ${trend.target?.id === t.id ? 'selected' : ''}>
+        ${escapeHtml(t.label)}
+      </option>`).join('')
+    targetSelect.addEventListener('change', () => {
+      state.trendTarget = Number(targetSelect.value)
+      pageDashboard(main)
+    })
+  }
+
+  document.getElementById('trend-note').textContent =
+    trend.target
+      ? (trend.target.mode === 'fixed'
+          ? `Diária média em reais · entrada ${fmtDate(trend.target.check_in)}`
+          : `Diária média em reais · ${trend.target.label}`)
+      : 'Diária média em reais'
+
+  lineChart(document.getElementById('trend'), {
+    dates: trend.dates,
+    series: trend.series.map((s) => ({ name: s.name, color: s.color, values: s.values })),
+    height: 300
+  })
+
+  renderRanking(document.getElementById('ranking'), rates, compliance)
+
+  document.getElementById('recent').innerHTML = findingsTable(findings)
+  wireFindingRows()
+  refreshIcons(main)
+}
