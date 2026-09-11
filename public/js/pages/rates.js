@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import { loading, emptyState, escapeHtml, fmtDate, pct, toast, busy } from '../ui.js'
+import { loading, emptyState, escapeHtml, fmtDate, pct, toast, busy, refreshIcons } from '../ui.js'
 import { money2 } from '../charts.js'
 import { TODAY } from '../core/state.js'
 import { waitForScan } from '../components/scan.js'
@@ -125,6 +125,7 @@ export async function pageRates (main) {
 
   if (groups.length === 0) {
     host.innerHTML = `<div class="card">${emptyState('info', 'Nenhum preço coletado ainda. Faça uma atualização no Painel.')}</div>`
+    refreshIcons(main)
     return
   }
 
@@ -176,4 +177,5 @@ export async function pageRates (main) {
       </div>
     </div>`
   }).join('')
+  refreshIcons(main)
 }

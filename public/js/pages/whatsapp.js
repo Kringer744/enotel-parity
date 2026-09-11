@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import { fmtDateTime, escapeHtml, statusBadge, toast, busy, loading, emptyState } from '../ui.js'
+import { fmtDateTime, escapeHtml, statusBadge, toast, busy, loading, emptyState, refreshIcons } from '../ui.js'
 
 /* ═══ WhatsApp ════════════════════════════════════════════════════════════ */
 
@@ -63,6 +63,7 @@ async function renderWaConnection () {
     status = await api.waStatus()
   } catch (err) {
     host.innerHTML = emptyState('info', err.message)
+    refreshIcons(host)
     return
   }
 
@@ -70,6 +71,7 @@ async function renderWaConnection () {
     host.innerHTML = `
       <div class="card-head"><div class="card-title">Conexão</div></div>
       ${emptyState('message-circle', 'Os avisos por WhatsApp ainda não estão disponíveis nesta conta. Em breve dá pra conectar o seu número por aqui.')}`
+    refreshIcons(host)
     return
   }
 
@@ -99,6 +101,7 @@ async function renderWaConnection () {
       try { await api.waDisconnect(); toast('Desconectado', 'ok'); await renderWaConnection() } catch (err) { toast(err.message, 'error') }
     })
     document.getElementById('wa-refresh-contacts').addEventListener('click', loadContacts)
+    refreshIcons(host)
     return
   }
 
@@ -117,6 +120,7 @@ async function renderWaConnection () {
       ${status.instance ? 'Gerar QR code' : 'Conectar WhatsApp'}
     </button>`
 
+  refreshIcons(host)
   document.getElementById('wa-action').addEventListener('click', async (ev) => {
     const btn = ev.currentTarget
     busy(btn, true, 'Aguarde…')
@@ -147,8 +151,10 @@ async function renderWaConnection () {
       } else if (conn.paircode) {
         area.innerHTML = `<div class="empty"><i data-lucide="hash" class="empty-icon"></i>
           Código de pareamento: <span class="strong mono" style="font-size:20px">${escapeHtml(conn.paircode)}</span></div>`
+        refreshIcons(area)
       } else {
         area.innerHTML = emptyState('info', 'Não consegui gerar o QR code agora. Tente de novo em instantes.')
+        refreshIcons(area)
       }
     } catch (err) {
       toast(err.message, 'error')
@@ -166,6 +172,7 @@ async function loadContacts () {
     const contacts = await api.waContacts()
     if (contacts.length === 0) {
       host.innerHTML = emptyState('info', 'Nenhuma conversa encontrada. Envie uma mensagem pelo celular e recarregue.')
+      refreshIcons(host)
       return
     }
     host.innerHTML = `
@@ -189,6 +196,7 @@ async function loadContacts () {
           <button class="btn small" style="margin-left:auto">Selecionar</button>
         </div>`).join('')
 
+      refreshIcons(document.getElementById('c-list'))
       document.getElementById('c-list').querySelectorAll('.contact-row').forEach((row) =>
         row.addEventListener('click', async () => {
           try {
@@ -253,6 +261,7 @@ async function renderWaRecipients () {
       <button class="btn" id="m-add">Adicionar</button>
     </div>`
 
+  refreshIcons(host)
   host.querySelectorAll('[data-toggle]').forEach((sw) =>
     sw.addEventListener('change', async () => {
       try { await api.waToggleRecipient(sw.dataset.toggle, sw.checked) } catch (err) { toast(err.message, 'error') }
@@ -298,4 +307,5 @@ async function renderWaLog () {
             <td>${statusBadge(n.status)}</td>
             <td class="small muted">${escapeHtml(n.error || '—')}</td>
           </tr>`).join('')}</tbody></table></div>`
+  refreshIcons(host)
 }

@@ -266,6 +266,7 @@ function renderLegend (host, items, { square = false } = {}) {
   if (items.length < 2 || !parent) return
   const legend = document.createElement('div')
   legend.className = 'legend'
+  legend.style.marginTop = '18px' // afasta a legenda dos rotulos de data do rodape (polimento macOS)
   for (const s of items) {
     const item = document.createElement('span')
     item.className = 'legend-item'
@@ -291,7 +292,7 @@ export function lineChart (host, { dates, series, height = 300, valueFmt = money
   }
 
   responsive(host, (width) => {
-    const M = { top: 14, right: 18, bottom: 30, left: 56 }
+    const M = { top: 14, right: 18, bottom: 34, left: 56 }
     const W = width - M.left - M.right
     const H = height - M.top - M.bottom
 

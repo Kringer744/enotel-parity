@@ -1,6 +1,8 @@
 import { api, getToken, setToken } from './api.js'
 import { escapeHtml, busy, refreshIcons, emptyState } from './ui.js'
 import { state } from './core/state.js'
+import { initTheme, setTheme, getTheme, onThemeChange } from './theme.js'
+import { repaintCharts } from './charts.js'
 import { pageDashboard } from './pages/dashboard.js'
 import { pageRates } from './pages/rates.js'
 import { pageFindings } from './pages/findings.js'
@@ -80,7 +82,12 @@ function renderApp () {
         <div class="nav-label">Monitoramento</div>
         <nav id="nav"></nav>
         <div class="sidebar-foot">
-          <div class="strong" style="color:var(--ink-2)">${escapeHtml(state.user?.name || '')}</div>
+          <div class="theme-toggle segmented" id="theme-toggle" role="group" aria-label="Tema">
+            <button type="button" data-mode="light" aria-label="Tema claro" title="Claro"><i data-lucide="sun" class="icon-sm"></i></button>
+            <button type="button" data-mode="dark" aria-label="Tema escuro" title="Escuro"><i data-lucide="moon" class="icon-sm"></i></button>
+            <button type="button" data-mode="system" aria-label="Seguir o sistema" title="Sistema"><i data-lucide="monitor" class="icon-sm"></i></button>
+          </div>
+          <div class="strong" style="color:var(--ink-2);margin-top:12px">${escapeHtml(state.user?.name || '')}</div>
           <div style="margin-top:2px">${escapeHtml(state.user?.email || '')}</div>
           <button class="btn ghost small" id="logout" style="margin-top:10px;padding-left:0">Sair</button>
         </div>
@@ -96,7 +103,18 @@ function renderApp () {
 
   renderNav()
   refreshIcons()
+  document.getElementById('theme-toggle').querySelectorAll('button').forEach((b) =>
+    b.addEventListener('click', () => setTheme(b.dataset.mode)))
+  markThemeActive()
   go(state.page)
+}
+
+/** Marca o modo de tema ativo no seletor da sidebar (claro/escuro/sistema). */
+function markThemeActive () {
+  const tg = document.getElementById('theme-toggle')
+  if (!tg) return
+  const mode = getTheme()
+  tg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode))
 }
 
 function renderNav () {
@@ -145,6 +163,9 @@ async function go (page) {
 window.addEventListener('auth:expired', () => renderLogin('Sua sessão expirou. Entre novamente.'))
 window.addEventListener('navigate', (e) => go(e.detail))
 window.addEventListener('nav:refresh', () => renderNav())
+// Rede de seguranca: alem do repinte automatico dos graficos via var()/classes,
+// forca o redesenho e reata o estado do seletor ao trocar de tema (ou SO em 'sistema').
+onThemeChange(() => { repaintCharts(); markThemeActive() })
 
 async function boot () {
   if (!getToken()) return renderLogin()
@@ -157,5 +178,6 @@ async function boot () {
   }
 }
 
+initTheme()
 boot()
 
